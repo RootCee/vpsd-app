@@ -1,0 +1,141 @@
+📱 Violence Prevention App (VP San Diego)
+Backend (FastAPI + SQLite) + Mobile App (Expo React Native)
+This project is an MVP for a violence-prevention and outreach app designed for real-world use by intervention teams in San Diego.
+It has three core modules:
+Hotspots — Identify rising risk areas (based on uploaded CSV incident data)
+Triage — Outreach follow-up queue (urgency-based)
+Screening — Simple routing tool for safety concerns
+All parts run locally using free tools (no Docker required).
+
+vpsd/
+│
+├── backend/                # FastAPI backend + SQLite database
+│   ├── main.py
+│   ├── db.py
+│   ├── models.py
+│   ├── ingest.py
+│   ├── hotspots.py
+│   ├── init_db.py
+│   └── vpsd.db            # SQLite DB (auto-created)
+│
+├── mobile/
+│   └── vpsd-mobile/        # Expo React Native app
+│       ├── App.js
+│       ├── src/
+│       │   ├── config.js   # API base URL (critical)
+│       │   └── screens/    # Hotspots, Triage, Screening
+│       └── package.json
+│
+└── README.md               # This file
+
+🚀 Getting the Project Running Again (Quick Start)
+Whenever you come back after time off, do these steps:
+1️⃣ Start the Backend (FastAPI)
+Open terminal inside VS Code:
+
+cd backend
+source .venv/bin/activate
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+Test backend:
+Open in browser:
+http://localhost:8000/health
+
+You should see:
+{"status":"ok"}
+If yes → backend is running.
+
+
+2️⃣ Start the Mobile App (Expo)
+
+Open a NEW terminal in VS Code:
+cd mobile/vpsd-mobile
+npm start
+This opens the Expo developer console and shows a QR code.
+
+View on your phone:
+iPhone → open Camera app → scan QR → tap the link
+Android → open Expo Go app → scan QR
+The app will load instantly.
+
+
+3️⃣ Make Sure Phone → Backend Works
+Since phones can’t reach localhost, the app must use your computer’s LAN IP.
+
+Get your computer’s IP:
+ipconfig getifaddr en0
+Example:
+192.168.1.20
+
+Update mobile config:
+Edit:
+mobile/vpsd-mobile/src/config.js
+Set:
+export const API_BASE = "http://YOUR_IP_HERE:8000";
+Replace YOUR_IP_HERE with your actual IP.
+Restart both backend + mobile app.
+
+
+🔥 Core Features (How to Use)
+
+▶️ Hotspots
+Upload incident CSV using a tool like Postman / Thunder Client
+Run computation via the app
+See “Top Rising Areas” on your phone
+
+▶️ Triage
+In the app, go to Triage
+Press Seed Demo (creates a test client)
+Press Load Queue
+You’ll see a list of clients sorted by urgency.
+
+▶️ Screening
+Go to Screening
+Enter notes
+The backend checks for escalation keywords
+(e.g., “gun”, “suicide”, “kill myself”)
+
+🔧 If Something Breaks, Check These
+❌ App loads but shows no data
+Fix the API URL inside src/config.js:
+export const API_BASE = "http://<your IP>:8000";
+Make sure the backend is running with:
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+❌ “Network request failed”
+Common causes:
+Phone and laptop are not on same Wi-Fi
+Firewall blocking port 8000
+Backend not running
+Wrong IP in config.js
+
+❌ Expo won’t load
+Stop and restart:
+npm start
+Then press:
+r      // reload
+w      // open in browser
+🛠 Useful Commands
+Create venv (only needed once)
+python3 -m venv .venv
+Activate venv
+source .venv/bin/activate
+Install backend deps
+pip install -r requirements.txt
+Install mobile deps
+npm install
+
+📦 Resetting or Wiping the DB
+If you want a clean database:
+rm backend/vpsd.db
+cd backend
+python init_db.py
+
+🧱 Future Upgrades (when you come back later)
+Add maps to Hotspots screen
+Add login system for outreach staff
+Add cloud database (Postgres)
+Build a production mobile release with Expo EAS
+Integrate real SD data sources (Calls for Service, SANDAG, etc.)
+Add push notifications
+Deploy backend to render.com or fly.io

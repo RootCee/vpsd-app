@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Python / FastAPI
+backend/.venv/
+backend/__pycache__/
+backend/**/*.pyc
+backend/vpsd.db
+backend/*.db
+backend/.env
+
+# Node / Expo
+mobile/**/node_modules/
+mobile/**/.expo/
+mobile/**/dist/
+mobile/**/.env
+
+# General
+.env
