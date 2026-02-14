@@ -1,13 +1,18 @@
+from datetime import datetime, timedelta
+import random
+from typing import Optional
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timedelta
 from sqlalchemy import func
-from db import SessionLocal
-from models import Incident, HotspotCell, Client, ContactLog
-import random
+
+from db import SessionLocal, engine
+from models import Base, Incident, HotspotCell, Client, ContactLog
+
 
 app = FastAPI()
 
+# --- CORS (ok for demo; tighten later for production) ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,6 +20,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------
+# STARTUP: ensure tables exist (critical for Render)
+# ---------------------------
+@app.on_event("startup")
+def on_startup():
+    # If tables don't exist in the deployed environment, create them.
+    # This prevents 500 errors like "no such table" on Render.
+    Base.metadata.create_all(bind=engine)
 
 
 # ---------------------------
@@ -28,7 +43,6 @@ def health():
 # ---------------------------
 # HOTSPOTS
 # ---------------------------
-
 @app.post("/hotspots/seed")
 def seed_hotspots(source: str = "sdpd_demo", n: int = 120):
     db = SessionLocal()
@@ -65,6 +79,9 @@ def seed_hotspots(source: str = "sdpd_demo", n: int = 120):
 
         db.commit()
         return {"status": "seeded", "inserted": inserted, "source": source}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"seed_hotspots failed: {e}")
     finally:
         db.close()
 
@@ -84,8 +101,8 @@ def compute_hotspots(source: str = "sdpd_demo"):
         now = datetime.utcnow()
 
         for inc in incidents:
-            cell_lat = round(inc.lat, 2)
-            cell_lon = round(inc.lon, 2)
+            cell_lat = round(float(inc.lat), 2)
+            cell_lon = round(float(inc.lon), 2)
             key = (cell_lat, cell_lon)
 
             if key not in grid:
@@ -110,6 +127,9 @@ def compute_hotspots(source: str = "sdpd_demo"):
 
         db.commit()
         return {"status": "computed", "cells": len(grid)}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"compute_hotspots failed: {e}")
     finally:
         db.close()
 
@@ -138,6 +158,8 @@ def get_hotspots():
                 for c in cells
             ]
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"get_hotspots failed: {e}")
     finally:
         db.close()
 
@@ -145,14 +167,13 @@ def get_hotspots():
 # ---------------------------
 # TRIAGE
 # ---------------------------
-
 def serialize_client(c: Client):
     return {
         "id": c.id,
         "display_name": c.display_name,
         "neighborhood": c.neighborhood,
         "notes": c.notes,
-        "created_at": c.created_at.isoformat(),
+        "created_at": c.created_at.isoformat() if c.created_at else None,
         "follow_up_at": c.follow_up_at.isoformat() if c.follow_up_at else None,
         "need_housing": c.need_housing,
         "need_food": c.need_food,
@@ -171,9 +192,9 @@ def create_client(payload: dict):
         raise HTTPException(400, "display_name is required")
 
     follow_raw = payload.get("follow_up_at")
-    follow = None
+    follow: Optional[datetime] = None
     if follow_raw not in (None, "", "null"):
-        follow = datetime.fromisoformat(follow_raw)
+        follow = datetime.fromisoformat(str(follow_raw))
 
     db = SessionLocal()
     try:
@@ -194,6 +215,9 @@ def create_client(payload: dict):
         db.commit()
         db.refresh(c)
         return {"client": serialize_client(c)}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"create_client failed: {e}")
     finally:
         db.close()
 
@@ -230,7 +254,6 @@ def update_client(client_id: int, payload: dict):
             if key in payload:
                 setattr(c, key, bool(payload.get(key)))
 
-        # location
         if "home_lat" in payload:
             c.home_lat = payload.get("home_lat")
         if "home_lon" in payload:
@@ -239,6 +262,11 @@ def update_client(client_id: int, payload: dict):
         db.commit()
         db.refresh(c)
         return {"client": serialize_client(c)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"update_client failed: {e}")
     finally:
         db.close()
 
@@ -270,6 +298,10 @@ def get_client(client_id: int):
                 for cl in contacts
             ],
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"get_client failed: {e}")
     finally:
         db.close()
 
@@ -302,6 +334,11 @@ def log_contact(client_id: int, payload: dict):
                 "note": cl.note,
             }
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"log_contact failed: {e}")
     finally:
         db.close()
 
@@ -312,71 +349,78 @@ def triage_queue():
     now = datetime.utcnow()
     cutoff = now - timedelta(days=30)
 
-    last_contact = (
-        db.query(ContactLog.client_id, func.max(ContactLog.contacted_at).label("last_time"))
-        .group_by(ContactLog.client_id)
-        .subquery()
-    )
-
-    misses = (
-        db.query(ContactLog.client_id, func.count(ContactLog.id).label("misses_30d"))
-        .filter(ContactLog.outcome == "no_answer", ContactLog.contacted_at >= cutoff)
-        .group_by(ContactLog.client_id)
-        .subquery()
-    )
-
-    rows = (
-        db.query(Client, last_contact.c.last_time, misses.c.misses_30d)
-        .outerjoin(last_contact, last_contact.c.client_id == Client.id)
-        .outerjoin(misses, misses.c.client_id == Client.id)
-        .all()
-    )
-
-    items = []
-    for c, last_time, miss_count in rows:
-        miss_count = int(miss_count or 0)
-        days_since = 9999 if not last_time else max(0, (now - last_time).days)
-
-        base_urgency = (miss_count * 5) + min(days_since, 60)
-
-        follow_up_urgency = 0
-        if c.follow_up_at:
-            diff_days = (now - c.follow_up_at).days
-            if diff_days >= 0:
-                follow_up_urgency = 50 + min(diff_days, 30)
-            else:
-                soon = abs(diff_days)
-                if soon <= 2:
-                    follow_up_urgency = 15
-                elif soon <= 7:
-                    follow_up_urgency = 8
-
-        urgency = base_urgency + follow_up_urgency
-
-        needs_count = (
-            int(bool(c.need_housing))
-            + int(bool(c.need_food))
-            + int(bool(c.need_therapy))
-            + int(bool(c.need_job))
-            + int(bool(c.need_transport))
+    try:
+        last_contact = (
+            db.query(ContactLog.client_id, func.max(ContactLog.contacted_at).label("last_time"))
+            .group_by(ContactLog.client_id)
+            .subquery()
         )
 
-        items.append({
-            "client_id": c.id,
-            "display_name": c.display_name,
-            "neighborhood": c.neighborhood,
-            "days_since_last": days_since,
-            "misses_30d": miss_count,
-            "urgency_score": urgency,
-            "follow_up_at": c.follow_up_at.isoformat() if c.follow_up_at else None,
-            "needs_count": needs_count,
-        })
+        misses = (
+            db.query(ContactLog.client_id, func.count(ContactLog.id).label("misses_30d"))
+            .filter(ContactLog.outcome == "no_answer", ContactLog.contacted_at >= cutoff)
+            .group_by(ContactLog.client_id)
+            .subquery()
+        )
 
-    items.sort(key=lambda x: x["urgency_score"], reverse=True)
-    db.close()
-    return {"items": items}
+        rows = (
+            db.query(Client, last_contact.c.last_time, misses.c.misses_30d)
+            .outerjoin(last_contact, last_contact.c.client_id == Client.id)
+            .outerjoin(misses, misses.c.client_id == Client.id)
+            .all()
+        )
+
+        items = []
+        for c, last_time, miss_count in rows:
+            miss_count = int(miss_count or 0)
+            days_since = 9999 if not last_time else max(0, (now - last_time).days)
+
+            base_urgency = (miss_count * 5) + min(days_since, 60)
+
+            follow_up_urgency = 0
+            if c.follow_up_at:
+                diff_days = (now - c.follow_up_at).days
+                if diff_days >= 0:
+                    follow_up_urgency = 50 + min(diff_days, 30)
+                else:
+                    soon = abs(diff_days)
+                    if soon <= 2:
+                        follow_up_urgency = 15
+                    elif soon <= 7:
+                        follow_up_urgency = 8
+
+            urgency = base_urgency + follow_up_urgency
+
+            needs_count = (
+                int(bool(c.need_housing))
+                + int(bool(c.need_food))
+                + int(bool(c.need_therapy))
+                + int(bool(c.need_job))
+                + int(bool(c.need_transport))
+            )
+
+            items.append({
+                "client_id": c.id,
+                "display_name": c.display_name,
+                "neighborhood": c.neighborhood,
+                "days_since_last": days_since,
+                "misses_30d": miss_count,
+                "urgency_score": urgency,
+                "follow_up_at": c.follow_up_at.isoformat() if c.follow_up_at else None,
+                "needs_count": needs_count,
+            })
+
+        items.sort(key=lambda x: x["urgency_score"], reverse=True)
+        return {"items": items}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"triage_queue failed: {e}")
+    finally:
+        db.close()
 
 
+# ---------------------------
+# CONTEXT (nearest hotspot for client)
+# ---------------------------
 def _dist2(a_lat, a_lon, b_lat, b_lon):
     return (a_lat - b_lat) ** 2 + (a_lon - b_lon) ** 2
 
@@ -414,6 +458,10 @@ def client_context(client_id: int):
                 "baseline_count": best.baseline_count,
             }
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"client_context failed: {e}")
     finally:
         db.close()
 
@@ -421,7 +469,6 @@ def client_context(client_id: int):
 # ---------------------------
 # SCREENING (placeholder)
 # ---------------------------
-
 @app.post("/screening/submit")
 def screening_submit(payload: dict):
     notes = (payload.get("notes") or "").lower()
