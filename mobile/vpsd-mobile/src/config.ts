@@ -1,1 +1,1 @@
-export const API_BASE = "http://192.168.1.241:8000";
+export const API_BASE = "https://vpsd-app-1.onrender.com";
