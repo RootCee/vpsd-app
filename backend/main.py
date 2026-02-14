@@ -1,29 +1,29 @@
+from datetime import datetime, timedelta
+import random
+from typing import Optional
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timedelta
 from sqlalchemy import func
-import random
 
 from db import SessionLocal, engine, Base
 from models import Incident, HotspotCell, Client, ContactLog
 
 
-
 app = FastAPI()
 
-# --- CORS (ok for demo; tighten later for production) ---
+# ---------------------------
+# STARTUP: CREATE TABLES
+# ---------------------------
 @app.on_event("startup")
 def on_startup():
-    # Creates tables on boot (works on Render now because models share db.Base)
+    # Creates tables automatically on boot (critical for Render)
     Base.metadata.create_all(bind=engine)
 
 
-@app.post("/admin/init")
-def admin_init():
-    # Manual “fix it now” endpoint (super useful for demo)
-    Base.metadata.create_all(bind=engine)
-    return {"status": "initialized"}
-
+# ---------------------------
+# CORS (ok for demo; tighten later)
+# ---------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -34,13 +34,13 @@ app.add_middleware(
 
 
 # ---------------------------
-# STARTUP: ensure tables exist (critical for Render)
+# ADMIN INIT (manual fallback)
 # ---------------------------
-@app.on_event("startup")
-def on_startup():
-    # If tables don't exist in the deployed environment, create them.
-    # This prevents 500 errors like "no such table" on Render.
+@app.post("/admin/init")
+def admin_init():
+    # Manual “fix it now” endpoint
     Base.metadata.create_all(bind=engine)
+    return {"status": "initialized"}
 
 
 # ---------------------------
@@ -90,6 +90,7 @@ def seed_hotspots(source: str = "sdpd_demo", n: int = 120):
 
         db.commit()
         return {"status": "seeded", "inserted": inserted, "source": source}
+
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"seed_hotspots failed: {e}")
@@ -101,6 +102,7 @@ def seed_hotspots(source: str = "sdpd_demo", n: int = 120):
 def compute_hotspots(source: str = "sdpd_demo"):
     db = SessionLocal()
     try:
+        # clear previous cells
         db.query(HotspotCell).delete()
         db.commit()
 
@@ -138,6 +140,7 @@ def compute_hotspots(source: str = "sdpd_demo"):
 
         db.commit()
         return {"status": "computed", "cells": len(grid)}
+
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"compute_hotspots failed: {e}")
@@ -169,6 +172,7 @@ def get_hotspots():
                 for c in cells
             ]
         }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"get_hotspots failed: {e}")
     finally:
@@ -226,6 +230,7 @@ def create_client(payload: dict):
         db.commit()
         db.refresh(c)
         return {"client": serialize_client(c)}
+
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"create_client failed: {e}")
@@ -273,6 +278,7 @@ def update_client(client_id: int, payload: dict):
         db.commit()
         db.refresh(c)
         return {"client": serialize_client(c)}
+
     except HTTPException:
         raise
     except Exception as e:
@@ -309,6 +315,7 @@ def get_client(client_id: int):
                 for cl in contacts
             ],
         }
+
     except HTTPException:
         raise
     except Exception as e:
@@ -345,6 +352,7 @@ def log_contact(client_id: int, payload: dict):
                 "note": cl.note,
             }
         }
+
     except HTTPException:
         raise
     except Exception as e:
@@ -423,6 +431,7 @@ def triage_queue():
 
         items.sort(key=lambda x: x["urgency_score"], reverse=True)
         return {"items": items}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"triage_queue failed: {e}")
     finally:
@@ -469,6 +478,7 @@ def client_context(client_id: int):
                 "baseline_count": best.baseline_count,
             }
         }
+
     except HTTPException:
         raise
     except Exception as e:
