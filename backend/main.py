@@ -1,18 +1,29 @@
-from datetime import datetime, timedelta
-import random
-from typing import Optional
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime, timedelta
 from sqlalchemy import func
+import random
 
-from db import SessionLocal, engine
-from models import Base, Incident, HotspotCell, Client, ContactLog
+from db import SessionLocal, engine, Base
+from models import Incident, HotspotCell, Client, ContactLog
+
 
 
 app = FastAPI()
 
 # --- CORS (ok for demo; tighten later for production) ---
+@app.on_event("startup")
+def on_startup():
+    # Creates tables on boot (works on Render now because models share db.Base)
+    Base.metadata.create_all(bind=engine)
+
+
+@app.post("/admin/init")
+def admin_init():
+    # Manual “fix it now” endpoint (super useful for demo)
+    Base.metadata.create_all(bind=engine)
+    return {"status": "initialized"}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
