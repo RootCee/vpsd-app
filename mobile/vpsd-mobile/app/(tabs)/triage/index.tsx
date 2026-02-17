@@ -12,6 +12,7 @@ import {
   ScrollView,
   Platform,
 } from "react-native";
+import { useRouter } from "expo-router";
 import { API_BASE } from "../../../src/config"; // <-- IMPORTANT: tabs/triage is deeper
 
 type QueueItem = {
@@ -62,6 +63,7 @@ function badgeStyle(score: number) {
 }
 
 export default function Triage() {
+  const router = useRouter();
   const [items, setItems] = useState<QueueItem[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -161,7 +163,10 @@ export default function Triage() {
     const isOverdue = followDays !== null && followDays <= 0;
 
     return (
-      <View style={[styles.card, isOverdue ? styles.cardOverdue : null]}>
+      <Pressable
+        style={[styles.card, isOverdue ? styles.cardOverdue : null]}
+        onPress={() => router.push(`/(tabs)/triage/${item.client_id}`)}
+      >
         <View style={styles.rowBetween}>
           <Text style={styles.name}>{item.display_name}</Text>
 
@@ -191,47 +196,7 @@ export default function Triage() {
             <Text style={styles.meta}>Follow-up: —</Text>
           )}
         </View>
-
-        <View style={styles.actionRow}>
-          <Pressable
-            style={styles.actionBtn}
-            onPress={async () => {
-              try {
-                const res = await fetch(`${API_BASE}/triage/clients/${item.client_id}/contacts`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ outcome: "reached", note: "Quick log from app" }),
-                });
-                await safeJson(res);
-                await refresh();
-              } catch (e: any) {
-                Alert.alert("Log Error", e?.message ? String(e.message) : "Unknown error");
-              }
-            }}
-          >
-            <Text style={styles.actionText}>Log Reached</Text>
-          </Pressable>
-
-          <Pressable
-            style={[styles.actionBtn, styles.actionBtnAlt]}
-            onPress={async () => {
-              try {
-                const res = await fetch(`${API_BASE}/triage/clients/${item.client_id}/contacts`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ outcome: "no_answer", note: "No answer" }),
-                });
-                await safeJson(res);
-                await refresh();
-              } catch (e: any) {
-                Alert.alert("Log Error", e?.message ? String(e.message) : "Unknown error");
-              }
-            }}
-          >
-            <Text style={styles.actionText}>No Answer</Text>
-          </Pressable>
-        </View>
-      </View>
+      </Pressable>
     );
   };
 

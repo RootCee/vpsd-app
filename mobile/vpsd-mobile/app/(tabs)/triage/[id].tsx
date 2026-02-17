@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Alert,
   Platform,
+  Pressable,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -93,6 +94,24 @@ export default function ClientDetail() {
     }
   };
 
+  const logContact = async (outcome: string, note: string) => {
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/triage/clients/${clientId}/contacts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ outcome, note }),
+      });
+      if (!res.ok) throw new Error("Failed to log contact");
+      await load();
+      Alert.alert("Success", "Contact logged");
+    } catch (e: any) {
+      Alert.alert("Log Error", e?.message || "Failed to log contact");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   useEffect(() => {
     load();
   }, [clientId]);
@@ -146,6 +165,24 @@ export default function ClientDetail() {
         <Text style={styles.title}>{client?.display_name || "Client"}</Text>
         {client?.neighborhood ? <Text style={styles.sub}>📍 {client.neighborhood}</Text> : null}
         {client?.notes ? <Text style={styles.notes}>{client.notes}</Text> : null}
+
+        <View style={styles.quickActions}>
+          <Pressable
+            style={styles.quickBtn}
+            onPress={() => logContact("reached", "Quick log from detail")}
+            disabled={saving}
+          >
+            <Text style={styles.quickBtnText}>Log Reached</Text>
+          </Pressable>
+
+          <Pressable
+            style={[styles.quickBtn, styles.quickBtnAlt]}
+            onPress={() => logContact("no_answer", "No answer")}
+            disabled={saving}
+          >
+            <Text style={styles.quickBtnText}>No Answer</Text>
+          </Pressable>
+        </View>
 
         <View style={{ gap: 10 }}>
           <Button title="Log Contact" onPress={() => router.push(`/(tabs)/triage/${clientId}/log`)} />
@@ -265,6 +302,19 @@ const styles = StyleSheet.create({
   },
   section: { color: "white", fontWeight: "800", marginTop: 10, fontSize: 16 },
   label: { color: "white", fontWeight: "700" },
+
+  quickActions: { flexDirection: "row", gap: 10, marginTop: 10 },
+  quickBtn: {
+    flex: 1,
+    backgroundColor: "#111827",
+    borderWidth: 1,
+    borderColor: "#1f2937",
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: "center",
+  },
+  quickBtnAlt: { backgroundColor: "#0b3d91", borderColor: "#1d4ed8" },
+  quickBtnText: { color: "#fff", fontWeight: "900" },
 
   followText: {
     color: "white",
