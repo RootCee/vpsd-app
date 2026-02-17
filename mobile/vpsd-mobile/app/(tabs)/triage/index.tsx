@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { authenticatedFetch, safeJson } from "../../../src/api/client";
+import { useAuth } from "../../../src/auth/AuthContext";
 
 type QueueItem = {
   client_id: number;
@@ -55,6 +56,7 @@ function badgeStyle(score: number) {
 
 export default function Triage() {
   const router = useRouter();
+  const { logout } = useAuth();
   const [items, setItems] = useState<QueueItem[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -203,6 +205,32 @@ export default function Triage() {
           <Pressable style={[styles.headerBtn, styles.headerBtnAlt2]} onPress={refresh}>
             <Text style={styles.headerBtnText}>{loading ? "…" : "Refresh"}</Text>
           </Pressable>
+
+          <Pressable
+            style={[styles.headerBtn, styles.headerBtnLogout]}
+            onPress={async () => {
+              Alert.alert(
+                "Logout",
+                "Are you sure you want to logout?",
+                [
+                  { text: "Cancel", style: "cancel" },
+                  {
+                    text: "Logout",
+                    style: "destructive",
+                    onPress: async () => {
+                      if (__DEV__) {
+                        console.log("[triage/index.tsx] Logging out...");
+                      }
+                      await logout();
+                      // Auth guard in _layout.tsx will handle redirect to /login
+                    },
+                  },
+                ]
+              );
+            }}
+          >
+            <Text style={styles.headerBtnText}>Logout</Text>
+          </Pressable>
         </View>
       </View>
 
@@ -345,6 +373,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#1f2937",
   },
   headerBtnAlt2: { backgroundColor: "#0b3d91" },
+  headerBtnLogout: { backgroundColor: "#7f1d1d" },
   headerBtnText: { color: "#fff", fontWeight: "800" },
 
   statsRow: {

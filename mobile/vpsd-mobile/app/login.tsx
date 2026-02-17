@@ -14,10 +14,11 @@ import { useAuth } from "../src/auth/AuthContext";
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login } = useAuth();
+  const { login, register } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [devMenuPresses, setDevMenuPresses] = useState(0);
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
@@ -28,11 +29,73 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       await login(email.trim().toLowerCase(), password);
-      router.replace("/(tabs)");
+      if (__DEV__) {
+        console.log("[login.tsx] Login successful");
+      }
+      // Auth guard in _layout.tsx will handle redirect
     } catch (error: any) {
+      if (__DEV__) {
+        console.error("[login.tsx] Login failed:", error);
+      }
       Alert.alert("Login Failed", error.message || "Invalid credentials");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDevMenu = () => {
+    if (!__DEV__) return;
+
+    const newCount = devMenuPresses + 1;
+    setDevMenuPresses(newCount);
+
+    if (newCount >= 3) {
+      setDevMenuPresses(0);
+      Alert.alert(
+        "🔧 Dev Menu",
+        "Create a demo user?",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Create Demo User",
+            onPress: async () => {
+              setLoading(true);
+              try {
+                await register("demo@vpsd.app", "demo123");
+                Alert.alert("Success", "Demo user created!\n\nEmail: demo@vpsd.app\nPassword: demo123");
+              } catch (error: any) {
+                const msg = error.message || "Failed to create demo user";
+                // If user already exists, show login option
+                if (msg.includes("already registered")) {
+                  Alert.alert(
+                    "User Exists",
+                    "Demo user already exists. Login instead?",
+                    [
+                      { text: "Cancel", style: "cancel" },
+                      {
+                        text: "Login",
+                        onPress: async () => {
+                          setEmail("demo@vpsd.app");
+                          setPassword("demo123");
+                          try {
+                            await login("demo@vpsd.app", "demo123");
+                          } catch (err: any) {
+                            Alert.alert("Error", err.message || "Login failed");
+                          }
+                        },
+                      },
+                    ]
+                  );
+                } else {
+                  Alert.alert("Error", msg);
+                }
+              } finally {
+                setLoading(false);
+              }
+            },
+          },
+        ]
+      );
     }
   };
 
@@ -40,7 +103,9 @@ export default function LoginScreen() {
     <View style={styles.container}>
       <View style={styles.card}>
         <Text style={styles.title}>👤 Login</Text>
-        <Text style={styles.subtitle}>VPSD App</Text>
+        <Pressable onPress={handleDevMenu}>
+          <Text style={styles.subtitle}>VPSD App</Text>
+        </Pressable>
 
         <Text style={styles.label}>Email</Text>
         <TextInput

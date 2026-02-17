@@ -1,7 +1,5 @@
-import * as SecureStore from "expo-secure-store";
+import { getToken } from "../auth/token";
 import { API_BASE } from "../config";
-
-const TOKEN_KEY = "vpsd_auth_token";
 
 /**
  * Make an authenticated API request with JWT token
@@ -10,7 +8,7 @@ export async function authenticatedFetch(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<Response> {
-  const token = await SecureStore.getItemAsync(TOKEN_KEY);
+  const token = await getToken();
 
   const headers: HeadersInit = {
     "Content-Type": "application/json",

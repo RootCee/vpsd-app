@@ -38,8 +38,14 @@ export default function RegisterScreen() {
     setLoading(true);
     try {
       await register(email.trim().toLowerCase(), password);
-      router.replace("/(tabs)");
+      if (__DEV__) {
+        console.log("[register.tsx] Registration successful");
+      }
+      // Auth guard in _layout.tsx will handle redirect
     } catch (error: any) {
+      if (__DEV__) {
+        console.error("[register.tsx] Registration failed:", error);
+      }
       Alert.alert("Registration Failed", error.message || "Could not create account");
     } finally {
       setLoading(false);
