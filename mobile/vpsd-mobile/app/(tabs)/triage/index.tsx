@@ -13,7 +13,7 @@ import {
   Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { API_BASE } from "../../../src/config"; // <-- IMPORTANT: tabs/triage is deeper
+import { authenticatedFetch, safeJson } from "../../../src/api/client";
 
 type QueueItem = {
   client_id: number;
@@ -27,15 +27,6 @@ type QueueItem = {
 };
 
 type QueueResponse = { items: QueueItem[] };
-
-async function safeJson<T>(res: Response): Promise<T> {
-  const text = await res.text();
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    throw new Error(`Non-JSON response (${res.status}): ${text}`);
-  }
-}
 
 function parseISO(iso?: string | null) {
   if (!iso) return null;
@@ -93,7 +84,7 @@ export default function Triage() {
   const refresh = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/triage/queue`);
+      const res = await authenticatedFetch("/triage/queue");
       const data = await safeJson<QueueResponse>(res);
       setItems(Array.isArray(data.items) ? data.items : []);
     } catch (e: any) {
@@ -124,9 +115,8 @@ export default function Triage() {
         need_transport: needTransport,
       };
 
-      const res = await fetch(`${API_BASE}/triage/clients`, {
+      const res = await authenticatedFetch("/triage/clients", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       await safeJson(res);

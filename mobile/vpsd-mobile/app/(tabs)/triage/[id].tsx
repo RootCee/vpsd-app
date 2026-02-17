@@ -159,131 +159,134 @@ export default function ClientDetail() {
     }
   };
 
-  return (
-    <View style={{ flex: 1, backgroundColor: "black" }}>
-      <View style={styles.container}>
-        <Text style={styles.title}>{client?.display_name || "Client"}</Text>
-        {client?.neighborhood ? <Text style={styles.sub}>📍 {client.neighborhood}</Text> : null}
-        {client?.notes ? <Text style={styles.notes}>{client.notes}</Text> : null}
+  const renderHeader = () => (
+    <>
+      <Text style={styles.title}>{client?.display_name || "Client"}</Text>
+      {client?.neighborhood ? <Text style={styles.sub}>📍 {client.neighborhood}</Text> : null}
+      {client?.notes ? <Text style={styles.notes}>{client.notes}</Text> : null}
 
-        <View style={styles.quickActions}>
-          <Pressable
-            style={styles.quickBtn}
-            onPress={() => logContact("reached", "Quick log from detail")}
-            disabled={saving}
-          >
-            <Text style={styles.quickBtnText}>Log Reached</Text>
-          </Pressable>
+      <View style={styles.quickActions}>
+        <Pressable
+          style={styles.quickBtn}
+          onPress={() => logContact("reached", "Quick log from detail")}
+          disabled={saving}
+        >
+          <Text style={styles.quickBtnText}>Log Reached</Text>
+        </Pressable>
 
-          <Pressable
-            style={[styles.quickBtn, styles.quickBtnAlt]}
-            onPress={() => logContact("no_answer", "No answer")}
-            disabled={saving}
-          >
-            <Text style={styles.quickBtnText}>No Answer</Text>
-          </Pressable>
-        </View>
+        <Pressable
+          style={[styles.quickBtn, styles.quickBtnAlt]}
+          onPress={() => logContact("no_answer", "No answer")}
+          disabled={saving}
+        >
+          <Text style={styles.quickBtnText}>No Answer</Text>
+        </Pressable>
+      </View>
 
-        <View style={{ gap: 10 }}>
-          <Button title="Log Contact" onPress={() => router.push(`/(tabs)/triage/${clientId}/log`)} />
-          <Button title={saving ? "Saving..." : "Save Plan"} onPress={savePlan} disabled={saving} />
-        </View>
+      <View style={{ gap: 10 }}>
+        <Button title="Log Contact" onPress={() => router.push(`/(tabs)/triage/${clientId}/log`)} />
+        <Button title={saving ? "Saving..." : "Save Plan"} onPress={savePlan} disabled={saving} />
+      </View>
 
-        <Text style={styles.section}>Plan</Text>
-        <Text style={styles.label}>Follow-up</Text>
+      <Text style={styles.section}>Plan</Text>
+      <Text style={styles.label}>Follow-up</Text>
 
-        <View style={{ flexDirection: "row", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <Text style={styles.followText}>
-            {followUpDate ? followUpDate.toLocaleString() : "None set"}
-          </Text>
-          <Button title="Pick" onPress={() => setShowPicker(true)} />
-          <Button title="Clear" onPress={() => setFollowUpDate(null)} />
-        </View>
+      <View style={{ flexDirection: "row", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <Text style={styles.followText}>
+          {followUpDate ? followUpDate.toLocaleString() : "None set"}
+        </Text>
+        <Button title="Pick" onPress={() => setShowPicker(true)} />
+        <Button title="Clear" onPress={() => setFollowUpDate(null)} />
+      </View>
 
-        <View style={{ flexDirection: "row", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
-          <Button title="Today" onPress={() => setFollowUpDate(new Date())} />
-          <Button
-            title="Tomorrow"
-            onPress={() => {
-              const d = new Date();
-              d.setDate(d.getDate() + 1);
-              setFollowUpDate(d);
-            }}
-          />
-          <Button
-            title="+3 Days"
-            onPress={() => {
-              const d = new Date();
-              d.setDate(d.getDate() + 3);
-              setFollowUpDate(d);
-            }}
-          />
-        </View>
-
-        {showPicker && (
-          <DateTimePicker
-            value={followUpDate ?? new Date()}
-            mode="datetime"
-            display={Platform.OS === "ios" ? "spinner" : "default"}
-            onChange={(event, selected) => {
-              if (Platform.OS !== "ios") setShowPicker(false);
-              if (selected) setFollowUpDate(selected);
-            }}
-          />
-        )}
-
-        {Platform.OS === "ios" && showPicker && (
-          <View style={{ marginTop: 10 }}>
-            <Button title="Done" onPress={() => setShowPicker(false)} />
-          </View>
-        )}
-
-        <Text style={styles.section}>Needs</Text>
-        <View style={styles.pills}>
-          {needs.map((n) => (
-            <Text
-              key={n.key}
-              onPress={() => toggleNeed(n.key)}
-              style={[styles.pill, n.value && styles.pillActive]}
-            >
-              {n.label}
-            </Text>
-          ))}
-        </View>
-
-        <Text style={styles.section}>Area Context</Text>
-        {nearest ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Nearest Hotspot Risk: {nearest.risk_score}</Text>
-            <Text style={styles.cardText}>
-              Recent: {nearest.recent_count} | Baseline: {nearest.baseline_count}
-            </Text>
-            <Text style={styles.cardSub}>
-              Cell: {nearest.grid_lat.toFixed(4)}, {nearest.grid_lon.toFixed(4)}
-            </Text>
-          </View>
-        ) : (
-          <Text style={{ color: "#aaa" }}>
-            No location set for this client yet (or no hotspots computed).
-          </Text>
-        )}
-
-        <Text style={styles.section}>Contact History</Text>
-
-        <FlatList
-          data={contacts}
-          keyExtractor={(i) => String(i.id)}
-          renderItem={({ item }) => (
-            <View style={styles.card}>
-              <Text style={styles.cardTitle}>{item.outcome.toUpperCase()}</Text>
-              <Text style={styles.cardText}>{new Date(item.contacted_at).toLocaleString()}</Text>
-              {!!item.note && <Text style={styles.cardText}>{item.note}</Text>}
-            </View>
-          )}
-          ListEmptyComponent={<Text style={{ color: "#aaa", marginTop: 10 }}>No contacts logged yet.</Text>}
-          contentContainerStyle={{ paddingBottom: 30 }}
+      <View style={{ flexDirection: "row", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
+        <Button title="Today" onPress={() => setFollowUpDate(new Date())} />
+        <Button
+          title="Tomorrow"
+          onPress={() => {
+            const d = new Date();
+            d.setDate(d.getDate() + 1);
+            setFollowUpDate(d);
+          }}
+        />
+        <Button
+          title="+3 Days"
+          onPress={() => {
+            const d = new Date();
+            d.setDate(d.getDate() + 3);
+            setFollowUpDate(d);
+          }}
         />
       </View>
+
+      {showPicker && (
+        <DateTimePicker
+          value={followUpDate ?? new Date()}
+          mode="datetime"
+          display={Platform.OS === "ios" ? "spinner" : "default"}
+          onChange={(event, selected) => {
+            if (Platform.OS !== "ios") setShowPicker(false);
+            if (selected) setFollowUpDate(selected);
+          }}
+        />
+      )}
+
+      {Platform.OS === "ios" && showPicker && (
+        <View style={{ marginTop: 10 }}>
+          <Button title="Done" onPress={() => setShowPicker(false)} />
+        </View>
+      )}
+
+      <Text style={styles.section}>Needs</Text>
+      <View style={styles.pills}>
+        {needs.map((n) => (
+          <Text
+            key={n.key}
+            onPress={() => toggleNeed(n.key)}
+            style={[styles.pill, n.value && styles.pillActive]}
+          >
+            {n.label}
+          </Text>
+        ))}
+      </View>
+
+      <Text style={styles.section}>Area Context</Text>
+      {nearest ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Nearest Hotspot Risk: {nearest.risk_score}</Text>
+          <Text style={styles.cardText}>
+            Recent: {nearest.recent_count} | Baseline: {nearest.baseline_count}
+          </Text>
+          <Text style={styles.cardSub}>
+            Cell: {nearest.grid_lat.toFixed(4)}, {nearest.grid_lon.toFixed(4)}
+          </Text>
+        </View>
+      ) : (
+        <Text style={{ color: "#aaa" }}>
+          No location set for this client yet (or no hotspots computed).
+        </Text>
+      )}
+
+      <Text style={styles.section}>Contact History</Text>
+    </>
+  );
+
+  return (
+    <View style={{ flex: 1, backgroundColor: "black" }}>
+      <FlatList
+        data={contacts}
+        keyExtractor={(i) => String(i.id)}
+        ListHeaderComponent={renderHeader}
+        renderItem={({ item }) => (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>{item.outcome.toUpperCase()}</Text>
+            <Text style={styles.cardText}>{new Date(item.contacted_at).toLocaleString()}</Text>
+            {!!item.note && <Text style={styles.cardText}>{item.note}</Text>}
+          </View>
+        )}
+        ListEmptyComponent={<Text style={{ color: "#aaa", marginTop: 10 }}>No contacts logged yet.</Text>}
+        contentContainerStyle={styles.listContent}
+      />
     </View>
   );
 }
@@ -302,6 +305,12 @@ const styles = StyleSheet.create({
   },
   section: { color: "white", fontWeight: "800", marginTop: 10, fontSize: 16 },
   label: { color: "white", fontWeight: "700" },
+
+  listContent: {
+    padding: 20,
+    gap: 10,
+    paddingBottom: 100, // Extra padding for iOS tab bar
+  },
 
   quickActions: { flexDirection: "row", gap: 10, marginTop: 10 },
   quickBtn: {

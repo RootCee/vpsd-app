@@ -2,12 +2,13 @@ from datetime import datetime, timedelta
 import random
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 
 from db import SessionLocal, engine, Base
-from models import Incident, HotspotCell, Client, ContactLog
+from models import Incident, HotspotCell, Client, ContactLog, User
+from auth import hash_password, verify_password, create_access_token, get_current_user
 
 
 app = FastAPI()
@@ -49,6 +50,97 @@ def admin_init():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# ---------------------------
+# AUTHENTICATION
+# ---------------------------
+@app.post("/auth/register")
+def register(payload: dict):
+    email = (payload.get("email") or "").strip().lower()
+    password = (payload.get("password") or "").strip()
+
+    if not email or "@" not in email:
+        raise HTTPException(400, "Valid email is required")
+
+    if not password or len(password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+
+    db = SessionLocal()
+    try:
+        # Check if user already exists
+        existing = db.query(User).filter(User.email == email).first()
+        if existing:
+            raise HTTPException(400, "Email already registered")
+
+        # Create new user
+        hashed_pwd = hash_password(password)
+        user = User(email=email, hashed_password=hashed_pwd, is_active=True)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        # Generate access token
+        access_token = create_access_token(data={"sub": user.id})
+
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "is_active": user.is_active,
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"register failed: {e}")
+    finally:
+        db.close()
+
+
+@app.post("/auth/login")
+def login(payload: dict):
+    email = (payload.get("email") or "").strip().lower()
+    password = (payload.get("password") or "").strip()
+
+    if not email or not password:
+        raise HTTPException(400, "Email and password are required")
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            raise HTTPException(401, "Invalid email or password")
+
+        if not verify_password(password, user.hashed_password):
+            raise HTTPException(401, "Invalid email or password")
+
+        if not user.is_active:
+            raise HTTPException(403, "Account is inactive")
+
+        # Generate access token
+        access_token = create_access_token(data={"sub": user.id})
+
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "is_active": user.is_active,
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"login failed: {e}")
+    finally:
+        db.close()
 
 
 # ---------------------------
@@ -201,7 +293,7 @@ def serialize_client(c: Client):
 
 
 @app.post("/triage/clients")
-def create_client(payload: dict):
+def create_client(payload: dict, current_user: User = Depends(get_current_user)):
     name = (payload.get("display_name") or "").strip()
     if not name:
         raise HTTPException(400, "display_name is required")
@@ -239,7 +331,7 @@ def create_client(payload: dict):
 
 
 @app.patch("/triage/clients/{client_id}")
-def update_client(client_id: int, payload: dict):
+def update_client(client_id: int, payload: dict, current_user: User = Depends(get_current_user)):
     db = SessionLocal()
     try:
         c = db.query(Client).filter(Client.id == client_id).first()
@@ -289,7 +381,7 @@ def update_client(client_id: int, payload: dict):
 
 
 @app.get("/triage/clients/{client_id}")
-def get_client(client_id: int):
+def get_client(client_id: int, current_user: User = Depends(get_current_user)):
     db = SessionLocal()
     try:
         c = db.query(Client).filter(Client.id == client_id).first()
@@ -325,7 +417,7 @@ def get_client(client_id: int):
 
 
 @app.post("/triage/clients/{client_id}/contacts")
-def log_contact(client_id: int, payload: dict):
+def log_contact(client_id: int, payload: dict, current_user: User = Depends(get_current_user)):
     outcome = (payload.get("outcome") or "").strip()
     if outcome not in ["reached", "no_answer", "referral", "other"]:
         raise HTTPException(400, "Invalid outcome")
@@ -363,7 +455,7 @@ def log_contact(client_id: int, payload: dict):
 
 
 @app.get("/triage/queue")
-def triage_queue():
+def triage_queue(current_user: User = Depends(get_current_user)):
     db = SessionLocal()
     now = datetime.utcnow()
     cutoff = now - timedelta(days=30)
@@ -446,7 +538,7 @@ def _dist2(a_lat, a_lon, b_lat, b_lon):
 
 
 @app.get("/triage/clients/{client_id}/context")
-def client_context(client_id: int):
+def client_context(client_id: int, current_user: User = Depends(get_current_user)):
     db = SessionLocal()
     try:
         c = db.query(Client).filter(Client.id == client_id).first()

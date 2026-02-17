@@ -32,6 +32,37 @@ async function safeJson<T>(res: Response): Promise<T> {
   }
 }
 
+// Risk tier helpers
+type RiskTier = "low" | "medium" | "high";
+
+function getRiskTier(riskScore: number): RiskTier {
+  if (riskScore >= 8) return "high";
+  if (riskScore >= 4) return "medium";
+  return "low";
+}
+
+function getMarkerSize(tier: RiskTier): number {
+  switch (tier) {
+    case "low":
+      return 20;
+    case "medium":
+      return 32;
+    case "high":
+      return 44;
+  }
+}
+
+function getMarkerColor(tier: RiskTier): { bg: string; border: string } {
+  switch (tier) {
+    case "low":
+      return { bg: "rgba(59, 130, 246, 0.4)", border: "rgba(37, 99, 235, 0.9)" }; // blue
+    case "medium":
+      return { bg: "rgba(251, 146, 60, 0.4)", border: "rgba(234, 88, 12, 0.9)" }; // orange
+    case "high":
+      return { bg: "rgba(239, 68, 68, 0.4)", border: "rgba(220, 38, 38, 0.9)" }; // red
+  }
+}
+
 export default function Hotspots() {
   const [cells, setCells] = useState<HotspotCell[]>([]);
   const [loading, setLoading] = useState(false);
@@ -142,30 +173,47 @@ export default function Hotspots() {
                     typeof c.grid_lon === "number"
                 )
                 .map((c) => {
-                  // scale marker size by risk
-                  const size = Math.min(50, 10 + (c.risk_score || 0) * 2);
+                  const tier = getRiskTier(c.risk_score);
+                  const size = getMarkerSize(tier);
+                  const colors = getMarkerColor(tier);
 
                   return (
                     <Marker
                       key={String(c.id)}
                       coordinate={{ latitude: c.grid_lat!, longitude: c.grid_lon! }}
                       title={`Risk: ${c.risk_score}`}
-                      description={`Recent: ${c.recent_count} | Baseline: ${c.baseline_count}`}
+                      description={`Recent: ${c.recent_count} | Baseline: ${c.baseline_count}\nCell: ${c.grid_lat!.toFixed(4)}, ${c.grid_lon!.toFixed(4)}`}
                     >
                       <View
                         style={{
                           width: size,
                           height: size,
                           borderRadius: size / 2,
-                          backgroundColor: "rgba(255, 0, 0, 0.35)",
+                          backgroundColor: colors.bg,
                           borderWidth: 2,
-                          borderColor: "rgba(255, 0, 0, 0.8)",
+                          borderColor: colors.border,
                         }}
                       />
                     </Marker>
                   );
                 })}
             </MapView>
+
+            {/* Legend */}
+            <View style={styles.legend}>
+              <View style={styles.legendRow}>
+                <View style={[styles.legendDot, { backgroundColor: getMarkerColor("low").border }]} />
+                <Text style={styles.legendText}>Low (&lt;4)</Text>
+              </View>
+              <View style={styles.legendRow}>
+                <View style={[styles.legendDot, { backgroundColor: getMarkerColor("medium").border }]} />
+                <Text style={styles.legendText}>Medium (4-7)</Text>
+              </View>
+              <View style={styles.legendRow}>
+                <View style={[styles.legendDot, { backgroundColor: getMarkerColor("high").border }]} />
+                <Text style={styles.legendText}>High (≥8)</Text>
+              </View>
+            </View>
           </View>
         ) : (
           <FlatList
@@ -239,6 +287,33 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#2a2a2a",
     backgroundColor: "#111",
+  },
+
+  legend: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    backgroundColor: "rgba(17, 17, 17, 0.95)",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#2a2a2a",
+    padding: 10,
+    gap: 6,
+  },
+  legendRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  legendDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+  },
+  legendText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
   },
 
   card: {
