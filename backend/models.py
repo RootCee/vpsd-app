@@ -19,8 +19,10 @@ class Incident(Base):
     __tablename__ = "incidents"
 
     id = Column(Integer, primary_key=True, index=True)
+    external_id = Column(String(128), unique=True, nullable=True, index=True)
     source = Column(String(64), index=True, nullable=False, default="sdpd_demo")
     incident_type = Column(String(64), nullable=False, default="demo")
+    offense_category = Column(String(128), nullable=True)
     occurred_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     lat = Column(Float, nullable=False)
     lon = Column(Float, nullable=False)

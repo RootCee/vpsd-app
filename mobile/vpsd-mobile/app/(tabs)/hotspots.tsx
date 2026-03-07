@@ -23,6 +23,18 @@ type HotspotsResponse = {
   cells: HotspotCell[];
 };
 
+type Incident = {
+  id: number;
+  external_id: string | null;
+  source: string;
+  incident_type: string;
+  offense_category: string | null;
+  occurred_at: string;
+  lat: number;
+  lon: number;
+};
+
+
 async function safeJson<T>(res: Response): Promise<T> {
   const text = await res.text();
   try {
@@ -65,15 +77,22 @@ function getMarkerColor(tier: RiskTier): { bg: string; border: string } {
 
 export default function Hotspots() {
   const [cells, setCells] = useState<HotspotCell[]>([]);
+  const [events, setEvents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
 
   const refresh = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/hotspots`);
-      const data = await safeJson<HotspotsResponse>(res);
-      setCells(Array.isArray(data.cells) ? data.cells : []);
+      const [hotRes, evtRes] = await Promise.all([
+        fetch(`${API_BASE}/hotspots`),
+        fetch(`${API_BASE}/events?days=7`),
+      ]);
+      const hotData = await safeJson<HotspotsResponse>(hotRes);
+      setCells(Array.isArray(hotData.cells) ? hotData.cells : []);
+
+      const evtData = await safeJson<{ items: Incident[] }>(evtRes);
+      setEvents(Array.isArray(evtData.items) ? evtData.items : []);
     } catch (e: any) {
       console.log(e?.message || e);
       Alert.alert(
@@ -109,6 +128,23 @@ export default function Hotspots() {
     }
   };
 
+  const pullEvents = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/events/pull?days=7`, {
+        method: "POST",
+      });
+      const data = await safeJson<{ inserted: number; source: string }>(res);
+      Alert.alert("Events Pulled", `${data.inserted ?? 0} incidents from ${data.source}`);
+      await refresh();
+    } catch (e: any) {
+      console.log(e?.message || e);
+      Alert.alert("Pull Error", e?.message ? String(e.message) : "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     refresh();
   }, []);
@@ -123,7 +159,7 @@ export default function Hotspots() {
     <View style={{ flex: 1, backgroundColor: "black" }}>
       <View style={styles.container}>
         <Text style={styles.title}>📍 Hotspots</Text>
-        <Text style={styles.sub}>Cells: {cells.length}</Text>
+        <Text style={styles.sub}>Cells: {cells.length} · Incidents: {events.length}</Text>
 
         <View style={styles.toggleRow}>
           <Text
@@ -148,6 +184,7 @@ export default function Hotspots() {
 
         <View style={styles.buttonRow}>
           <Button title="Seed Demo Data" onPress={seedDemo} disabled={loading} />
+          <Button title="Pull Real Events" onPress={pullEvents} disabled={loading} />
           <Button
             title={loading ? "Loading..." : "Refresh"}
             onPress={refresh}
@@ -197,6 +234,23 @@ export default function Hotspots() {
                     </Marker>
                   );
                 })}
+
+              {events.map((evt) => {
+                const label = evt.offense_category || evt.incident_type;
+                const when = new Date(evt.occurred_at).toLocaleDateString(
+                  undefined,
+                  { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }
+                );
+                return (
+                  <Marker
+                    key={`evt-${evt.id}`}
+                    coordinate={{ latitude: evt.lat, longitude: evt.lon }}
+                    title={label}
+                    description={when}
+                    pinColor="#facc15"
+                  />
+                );
+              })}
             </MapView>
 
             {/* Legend */}
@@ -212,6 +266,10 @@ export default function Hotspots() {
               <View style={styles.legendRow}>
                 <View style={[styles.legendDot, { backgroundColor: getMarkerColor("high").border }]} />
                 <Text style={styles.legendText}>High (≥8)</Text>
+              </View>
+              <View style={styles.legendRow}>
+                <View style={[styles.legendDot, { backgroundColor: "#facc15" }]} />
+                <Text style={styles.legendText}>Incident</Text>
               </View>
             </View>
           </View>

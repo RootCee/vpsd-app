@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 import random
 from typing import Optional
 
+import httpx
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
@@ -9,6 +10,12 @@ from sqlalchemy import func
 from db import SessionLocal, engine, Base
 from models import Incident, HotspotCell, Client, ContactLog, User
 from auth import hash_password, verify_password, create_access_token, get_current_user
+
+# ArcGIS FeatureServer for SDPD NIBRS (City of San Diego hosted)
+_ARCGIS_URL = (
+    "https://webmaps.sandiego.gov/arcgis/rest/services"
+    "/SDPD/SDPD_NIBRS_Crime_Offenses_Geo/FeatureServer/0/query"
+)
 
 
 app = FastAPI()
@@ -575,6 +582,195 @@ def client_context(client_id: int, current_user: User = Depends(get_current_user
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"client_context failed: {e}")
+    finally:
+        db.close()
+
+
+# ---------------------------
+# EVENTS (SDPD NIBRS via ArcGIS, with demo fallback)
+# ---------------------------
+
+_DEMO_INCIDENT_TYPES = [
+    "assault", "burglary", "theft", "vandalism", "robbery",
+    "dui", "drug_offense", "trespassing", "disturbance", "vehicle_theft",
+]
+
+_SD_CENTERS = [
+    (32.7157, -117.1611),  # Downtown
+    (32.7406, -117.0840),  # City Heights
+    (32.7007, -117.0825),  # SE SD
+    (32.7831, -117.1192),  # Clairemont
+    (32.7484, -117.1325),  # North Park
+]
+
+
+def _seed_demo_events(db, days: int, n: int = 150) -> int:
+    """Wipe and repopulate demo events. Returns count inserted."""
+    db.query(Incident).filter(Incident.source == "sdpd_demo_events").delete()
+    now = datetime.utcnow()
+    for i in range(n):
+        base_lat, base_lon = _SD_CENTERS[i % len(_SD_CENTERS)]
+        lat = base_lat + random.uniform(-0.025, 0.025)
+        lon = base_lon + random.uniform(-0.025, 0.025)
+        days_ago = random.uniform(0, days)
+        occurred_at = now - timedelta(days=days_ago, hours=random.randint(0, 23))
+        db.add(Incident(
+            source="sdpd_demo_events",
+            incident_type=random.choice(_DEMO_INCIDENT_TYPES),
+            offense_category=random.choice(_DEMO_INCIDENT_TYPES).replace("_", " ").title(),
+            occurred_at=occurred_at,
+            lat=lat,
+            lon=lon,
+        ))
+    return n
+
+
+@app.post("/events/pull")
+def pull_events(days: int = 7):
+    """Fetch SDPD NIBRS incidents from ArcGIS; fall back to demo data."""
+    Base.metadata.create_all(bind=engine)
+
+    since = datetime.utcnow() - timedelta(days=days)
+
+    params: dict[str, str] = {
+        "f": "json",
+        "outFields": "NIBRS_UNIQ,OCCURED_ON,IBR_OFFENSE_DESCRIPTION,PD_OFFENSE_CATEGORY,X,Y",
+        "returnGeometry": "true",
+        "outSR": "4326",
+        "where": f"OCCURED_ON >= TIMESTAMP '{since.strftime('%Y-%m-%d %H:%M:%S')}'",
+        "resultRecordCount": "2000",
+    }
+
+    features: list = []
+    arcgis_error: str | None = None
+    try:
+        resp = httpx.get(_ARCGIS_URL, params=params, timeout=30)
+        resp.raise_for_status()
+        body = resp.json()
+        if "error" in body:
+            arcgis_error = str(body["error"])
+        else:
+            features = body.get("features") or []
+    except Exception as e:
+        arcgis_error = str(e)
+
+    db = SessionLocal()
+    try:
+        if features:
+            inserted = 0
+            skipped = 0
+            for feat in features:
+                attrs = feat.get("attributes") or {}
+                geom = feat.get("geometry") or {}
+
+                # --- external_id from NIBRS_UNIQ ---
+                nibrs_uniq = attrs.get("NIBRS_UNIQ")
+                if not nibrs_uniq:
+                    skipped += 1
+                    continue
+                external_id = f"sdpd_{nibrs_uniq}"
+
+                # --- coordinates: prefer geometry x/y, fall back to X/Y attrs ---
+                lon = geom.get("x") if geom.get("x") is not None else attrs.get("X")
+                lat = geom.get("y") if geom.get("y") is not None else attrs.get("Y")
+                if lat is None or lon is None:
+                    skipped += 1
+                    continue
+
+                # --- occurred_at from OCCURED_ON (epoch ms) ---
+                ts_raw = attrs.get("OCCURED_ON")
+                if ts_raw:
+                    occurred_at = datetime.utcfromtimestamp(int(ts_raw) / 1000)
+                else:
+                    occurred_at = datetime.utcnow()
+
+                # --- incident_type / offense_category ---
+                incident_type = str(
+                    attrs.get("IBR_OFFENSE_DESCRIPTION")
+                    or attrs.get("PD_OFFENSE_CATEGORY")
+                    or "unknown"
+                )
+                offense_category = str(
+                    attrs.get("PD_OFFENSE_CATEGORY")
+                    or attrs.get("IBR_OFFENSE_DESCRIPTION")
+                    or "unknown"
+                )
+
+                # --- upsert by external_id ---
+                existing = db.query(Incident).filter(
+                    Incident.external_id == external_id
+                ).first()
+                if existing:
+                    existing.lat = lat
+                    existing.lon = lon
+                    existing.occurred_at = occurred_at
+                    existing.offense_category = offense_category
+                    existing.incident_type = incident_type
+                    skipped += 1
+                else:
+                    db.add(Incident(
+                        external_id=external_id,
+                        source="sdpd_nibrs",
+                        incident_type=incident_type,
+                        offense_category=offense_category,
+                        occurred_at=occurred_at,
+                        lat=float(lat),
+                        lon=float(lon),
+                    ))
+                    inserted += 1
+
+            db.commit()
+            return {"inserted": inserted, "skipped": skipped, "source": "sdpd_nibrs"}
+
+        # --- Demo fallback when ArcGIS is unreachable / empty ---
+        n = _seed_demo_events(db, days)
+        db.commit()
+        return {
+            "inserted": n,
+            "skipped": 0,
+            "source": "demo",
+            "arcgis_note": arcgis_error or "no features returned",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(500, f"pull_events failed: {e}")
+    finally:
+        db.close()
+
+
+@app.get("/events")
+def get_events(days: int = 7):
+    """Return incidents from the last `days` days for the map."""
+    Base.metadata.create_all(bind=engine)
+    since = datetime.utcnow() - timedelta(days=days)
+    db = SessionLocal()
+    try:
+        incidents = (
+            db.query(Incident)
+            .filter(Incident.occurred_at >= since)
+            .order_by(Incident.occurred_at.desc())
+            .limit(2000)
+            .all()
+        )
+        return {
+            "items": [
+                {
+                    "id": inc.id,
+                    "lat": inc.lat,
+                    "lon": inc.lon,
+                    "occurred_at": inc.occurred_at.isoformat(),
+                    "incident_type": inc.incident_type,
+                    "offense_category": inc.offense_category,
+                    "source": inc.source,
+                }
+                for inc in incidents
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(500, f"get_events failed: {e}")
     finally:
         db.close()
 
