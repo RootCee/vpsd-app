@@ -281,6 +281,7 @@ def get_hotspots():
                     last_at = inc.occurred_at
 
             top_crime = max(type_counts, key=type_counts.get) if type_counts else None  # type: ignore[arg-type]
+            top_crime_types = sorted(type_counts, key=lambda k: type_counts[k], reverse=True)[:3] if type_counts else []
 
             # Trend
             if c.baseline_count and c.baseline_count > 0:
@@ -308,6 +309,7 @@ def get_hotspots():
                 "recent_count": c.recent_count,
                 "baseline_count": c.baseline_count,
                 "top_crime_type": top_crime,
+                "top_crime_types": top_crime_types,
                 "last_incident_at": last_at.isoformat() if last_at else None,
                 "trend_pct": trend_pct,
                 "summary": summary,

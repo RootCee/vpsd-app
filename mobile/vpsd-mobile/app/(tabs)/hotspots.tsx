@@ -18,6 +18,7 @@ type HotspotCell = {
   baseline_count: number;
   risk_score: number;
   top_crime_type?: string | null;
+  top_crime_types?: string[];
   last_incident_at?: string | null;
   trend_pct?: number | null;
   summary?: string | null;
@@ -306,11 +307,14 @@ export default function Hotspots() {
                       c.trend_pct === null || c.trend_pct === undefined
                         ? "New Spike"
                         : `${c.trend_pct > 0 ? "+" : ""}${c.trend_pct}%`;
+                    const topCrimes = c.top_crime_types?.length
+                      ? `Top crimes: ${c.top_crime_types.join(", ")}`
+                      : c.top_crime_type ? `Top crime: ${c.top_crime_type}` : null;
                     const desc = [
                       `${tier.charAt(0).toUpperCase() + tier.slice(1)} Risk`,
                       `Recent: ${c.recent_count} | Baseline: ${c.baseline_count}`,
                       `Trend: ${trendLabel}`,
-                      c.top_crime_type ? `Top crime: ${c.top_crime_type}` : null,
+                      topCrimes,
                       c.last_incident_at
                         ? `Last: ${new Date(c.last_incident_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`
                         : null,
