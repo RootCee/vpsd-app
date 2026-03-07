@@ -290,6 +290,16 @@ def get_hotspots():
             else:
                 trend_pct = 0
 
+            # Build human-readable summary
+            trend_word = "increasing" if (trend_pct is not None and trend_pct > 0) else (
+                "decreasing" if (trend_pct is not None and trend_pct < 0) else "new activity"
+            )
+            rc: int = getattr(c, "recent_count", 0)  # type: ignore[assignment]
+            summary = f"Hot because {rc} recent incident{'s' if rc != 1 else ''}"
+            if top_crime:
+                summary += f", mostly {top_crime}"
+            summary += f", with activity {trend_word} vs baseline."
+
             enriched.append({
                 "id": c.id,
                 "grid_lat": c.grid_lat,
@@ -300,6 +310,7 @@ def get_hotspots():
                 "top_crime_type": top_crime,
                 "last_incident_at": last_at.isoformat() if last_at else None,
                 "trend_pct": trend_pct,
+                "summary": summary,
             })
 
         return {"cells": enriched}

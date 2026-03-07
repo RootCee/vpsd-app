@@ -20,6 +20,7 @@ type HotspotCell = {
   top_crime_type?: string | null;
   last_incident_at?: string | null;
   trend_pct?: number | null;
+  summary?: string | null;
 };
 
 type HotspotsResponse = {
@@ -67,6 +68,15 @@ function crimeColorToPin(c: CrimeColor): string {
     case "property": return "#f59e0b";
     case "drug": return "#a855f7";
     case "other": return "#3b82f6";
+  }
+}
+
+function crimeMarkerSize(c: CrimeColor): number {
+  switch (c) {
+    case "violent": return 14;
+    case "property": return 11;
+    case "drug": return 11;
+    case "other": return 9;
   }
 }
 
@@ -284,8 +294,8 @@ export default function Hotspots() {
                 longitudeDelta: 0.25,
               }}
             >
-              {/* --- Hotspots layer --- */}
-              {mapLayer === "hotspots" &&
+              {/* --- Hotspot circles (visible in hotspots + forecast layers) --- */}
+              {(mapLayer === "hotspots" || mapLayer === "forecast") &&
                 cells
                   .filter((c) => typeof c.grid_lat === "number" && typeof c.grid_lon === "number")
                   .map((c) => {
@@ -300,10 +310,11 @@ export default function Hotspots() {
                       `${tier.charAt(0).toUpperCase() + tier.slice(1)} Risk`,
                       `Recent: ${c.recent_count} | Baseline: ${c.baseline_count}`,
                       `Trend: ${trendLabel}`,
-                      c.top_crime_type ? `Top: ${c.top_crime_type}` : null,
+                      c.top_crime_type ? `Top crime: ${c.top_crime_type}` : null,
                       c.last_incident_at
                         ? `Last: ${new Date(c.last_incident_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`
                         : null,
+                      c.summary || null,
                     ]
                       .filter(Boolean)
                       .join("\n");
@@ -320,20 +331,21 @@ export default function Hotspots() {
                             width: size,
                             height: size,
                             borderRadius: size / 2,
-                            backgroundColor: colors.bg,
+                            backgroundColor: mapLayer === "forecast" ? "rgba(59,130,246,0.15)" : colors.bg,
                             borderWidth: 2,
-                            borderColor: colors.border,
+                            borderColor: mapLayer === "forecast" ? "rgba(59,130,246,0.3)" : colors.border,
                           }}
                         />
                       </Marker>
                     );
                   })}
 
-              {/* --- Incidents layer --- */}
-              {mapLayer === "incidents" &&
+              {/* --- Incident pins (visible in hotspots + incidents layers) --- */}
+              {(mapLayer === "hotspots" || mapLayer === "incidents") &&
                 events.map((evt) => {
                   const cat = getCrimeColor(evt.offense_category || evt.incident_type);
                   const pin = crimeColorToPin(cat);
+                  const sz = crimeMarkerSize(cat);
                   const title = evt.incident_type || "Incident";
                   const lines = [
                     evt.offense_category && evt.offense_category !== evt.incident_type
@@ -352,12 +364,22 @@ export default function Hotspots() {
                       coordinate={{ latitude: evt.lat, longitude: evt.lon }}
                       title={title}
                       description={lines}
-                      pinColor={pin}
-                    />
+                    >
+                      <View
+                        style={{
+                          width: sz,
+                          height: sz,
+                          borderRadius: sz / 2,
+                          backgroundColor: pin,
+                          borderWidth: 1.5,
+                          borderColor: "rgba(0,0,0,0.3)",
+                        }}
+                      />
+                    </Marker>
                   );
                 })}
 
-              {/* --- Forecast layer --- */}
+              {/* --- Forecast overlay (only in forecast layer) --- */}
               {mapLayer === "forecast" &&
                 forecast.map((fc, i) => {
                   const maxScore = forecast[0]?.forecast_score || 1;
@@ -387,7 +409,8 @@ export default function Hotspots() {
 
             {/* Legend */}
             <View style={styles.legend}>
-              {mapLayer === "hotspots" && (
+              {/* Hotspot risk levels — shown in hotspots + forecast */}
+              {(mapLayer === "hotspots" || mapLayer === "forecast") && (
                 <>
                   <View style={styles.legendRow}>
                     <View style={[styles.legendDot, { backgroundColor: getMarkerColor("low").border }]} />
@@ -395,7 +418,7 @@ export default function Hotspots() {
                   </View>
                   <View style={styles.legendRow}>
                     <View style={[styles.legendDot, { backgroundColor: getMarkerColor("medium").border }]} />
-                    <Text style={styles.legendText}>Medium (4-7)</Text>
+                    <Text style={styles.legendText}>Med (4-7)</Text>
                   </View>
                   <View style={styles.legendRow}>
                     <View style={[styles.legendDot, { backgroundColor: getMarkerColor("high").border }]} />
@@ -403,35 +426,37 @@ export default function Hotspots() {
                   </View>
                 </>
               )}
-              {mapLayer === "incidents" && (
+              {/* Incident categories — shown in hotspots + incidents */}
+              {(mapLayer === "hotspots" || mapLayer === "incidents") && (
                 <>
                   <View style={styles.legendRow}>
-                    <View style={[styles.legendDot, { backgroundColor: "#ef4444" }]} />
+                    <View style={[styles.legendDot, { backgroundColor: "#ef4444", width: 12, height: 12, borderRadius: 6 }]} />
                     <Text style={styles.legendText}>Violent</Text>
                   </View>
                   <View style={styles.legendRow}>
-                    <View style={[styles.legendDot, { backgroundColor: "#f59e0b" }]} />
+                    <View style={[styles.legendDot, { backgroundColor: "#f59e0b", width: 10, height: 10, borderRadius: 5 }]} />
                     <Text style={styles.legendText}>Property</Text>
                   </View>
                   <View style={styles.legendRow}>
-                    <View style={[styles.legendDot, { backgroundColor: "#a855f7" }]} />
+                    <View style={[styles.legendDot, { backgroundColor: "#a855f7", width: 10, height: 10, borderRadius: 5 }]} />
                     <Text style={styles.legendText}>Drug/Vice</Text>
                   </View>
                   <View style={styles.legendRow}>
-                    <View style={[styles.legendDot, { backgroundColor: "#3b82f6" }]} />
+                    <View style={[styles.legendDot, { backgroundColor: "#3b82f6", width: 8, height: 8, borderRadius: 4 }]} />
                     <Text style={styles.legendText}>Other</Text>
                   </View>
                 </>
               )}
+              {/* Forecast — shown only in forecast */}
               {mapLayer === "forecast" && (
                 <>
                   <View style={styles.legendRow}>
                     <View style={[styles.legendDot, { backgroundColor: "rgba(147, 51, 234, 0.5)" }]} />
-                    <Text style={styles.legendText}>Lower Risk</Text>
+                    <Text style={styles.legendText}>Lower Forecast</Text>
                   </View>
                   <View style={styles.legendRow}>
                     <View style={[styles.legendDot, { backgroundColor: "rgba(147, 51, 234, 1)" }]} />
-                    <Text style={styles.legendText}>Higher Risk</Text>
+                    <Text style={styles.legendText}>Higher Forecast</Text>
                   </View>
                 </>
               )}
