@@ -135,8 +135,20 @@ export default function Hotspots() {
         method: "POST",
       });
       const data = await safeJson<{ inserted: number; source: string }>(res);
-      Alert.alert("Events Pulled", `${data.inserted ?? 0} incidents from ${data.source}`);
+      const inserted = data.inserted ?? 0;
+
+      // Compute hotspot cells from the pulled incidents
+      const hotRes = await fetch(
+        `${API_BASE}/hotspots/run?source=${data.source || "sdpd_nibrs"}`,
+        { method: "POST" }
+      );
+      const hotData = await safeJson<{ cells: number }>(hotRes);
+
       await refresh();
+      Alert.alert(
+        "Events Pulled",
+        `${inserted} incidents from ${data.source} and computed ${hotData.cells ?? 0} hotspot cells`
+      );
     } catch (e: any) {
       console.log(e?.message || e);
       Alert.alert("Pull Error", e?.message ? String(e.message) : "Unknown error");
