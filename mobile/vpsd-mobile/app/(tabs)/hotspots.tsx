@@ -17,6 +17,9 @@ type HotspotCell = {
   recent_count: number;
   baseline_count: number;
   risk_score: number;
+  top_crime_type?: string | null;
+  last_incident_at?: string | null;
+  trend_pct?: number | null;
 };
 
 type HotspotsResponse = {
@@ -33,6 +36,39 @@ type Incident = {
   lat: number;
   lon: number;
 };
+
+type ForecastCell = {
+  grid_lat: number;
+  grid_lon: number;
+  forecast_score: number;
+  very_recent_24h: number;
+  recent_7d: number;
+  baseline: number;
+};
+
+// --- Offense category → color mapper ---
+type CrimeColor = "violent" | "property" | "drug" | "other";
+
+const _VIOLENT = ["assault", "robbery", "homicide", "murder", "rape", "kidnap", "weapon", "battery", "manslaughter", "arson"];
+const _PROPERTY = ["burglary", "theft", "larceny", "vandalism", "vehicle_theft", "shoplifting", "stolen", "fraud", "forgery", "trespass"];
+const _DRUG = ["drug", "narcotic", "dui", "marijuana", "cocaine", "substance", "prostitut", "vice"];
+
+function getCrimeColor(type: string): CrimeColor {
+  const lower = (type || "").toLowerCase();
+  if (_VIOLENT.some((k) => lower.includes(k))) return "violent";
+  if (_PROPERTY.some((k) => lower.includes(k))) return "property";
+  if (_DRUG.some((k) => lower.includes(k))) return "drug";
+  return "other";
+}
+
+function crimeColorToPin(c: CrimeColor): string {
+  switch (c) {
+    case "violent": return "#ef4444";
+    case "property": return "#f59e0b";
+    case "drug": return "#a855f7";
+    case "other": return "#3b82f6";
+  }
+}
 
 
 async function safeJson<T>(res: Response): Promise<T> {
@@ -78,21 +114,34 @@ function getMarkerColor(tier: RiskTier): { bg: string; border: string } {
 export default function Hotspots() {
   const [cells, setCells] = useState<HotspotCell[]>([]);
   const [events, setEvents] = useState<Incident[]>([]);
+  const [forecast, setForecast] = useState<ForecastCell[]>([]);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
+  const [mapLayer, setMapLayer] = useState<"hotspots" | "incidents" | "forecast">("hotspots");
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
 
   const refresh = async () => {
     setLoading(true);
     try {
-      const [hotRes, evtRes] = await Promise.all([
+      const [hotRes, evtRes, fcRes] = await Promise.all([
         fetch(`${API_BASE}/hotspots`),
         fetch(`${API_BASE}/events?days=7`),
+        fetch(`${API_BASE}/hotspots/forecast?source=sdpd_nibrs`),
       ]);
       const hotData = await safeJson<HotspotsResponse>(hotRes);
       setCells(Array.isArray(hotData.cells) ? hotData.cells : []);
 
       const evtData = await safeJson<{ items: Incident[] }>(evtRes);
-      setEvents(Array.isArray(evtData.items) ? evtData.items : []);
+      const items = Array.isArray(evtData.items) ? evtData.items : [];
+      setEvents(items);
+
+      const fcData = await safeJson<{ cells: ForecastCell[] }>(fcRes);
+      setForecast(Array.isArray(fcData.cells) ? fcData.cells : []);
+
+      // Last updated = most recent occurred_at
+      if (items.length > 0) {
+        setLastUpdated(items[0].occurred_at);
+      }
     } catch (e: any) {
       console.log(e?.message || e);
       Alert.alert(
@@ -171,28 +220,48 @@ export default function Hotspots() {
     <View style={{ flex: 1, backgroundColor: "black" }}>
       <View style={styles.container}>
         <Text style={styles.title}>📍 Hotspots</Text>
-        <Text style={styles.sub}>Cells: {cells.length} · Incidents: {events.length}</Text>
+        <Text style={styles.sub}>
+          Cells: {cells.length} · Incidents: {events.length}
+          {lastUpdated ? ` · Updated: ${new Date(lastUpdated).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : ""}
+        </Text>
 
         <View style={styles.toggleRow}>
           <Text
             onPress={() => setViewMode("map")}
-            style={[
-              styles.toggleBtn,
-              viewMode === "map" && styles.toggleActive,
-            ]}
+            style={[styles.toggleBtn, viewMode === "map" && styles.toggleActive]}
           >
             Map
           </Text>
           <Text
             onPress={() => setViewMode("list")}
-            style={[
-              styles.toggleBtn,
-              viewMode === "list" && styles.toggleActive,
-            ]}
+            style={[styles.toggleBtn, viewMode === "list" && styles.toggleActive]}
           >
             List
           </Text>
         </View>
+
+        {viewMode === "map" && (
+          <View style={styles.toggleRow}>
+            <Text
+              onPress={() => setMapLayer("hotspots")}
+              style={[styles.toggleBtn, mapLayer === "hotspots" && styles.toggleActive]}
+            >
+              Hotspots
+            </Text>
+            <Text
+              onPress={() => setMapLayer("incidents")}
+              style={[styles.toggleBtn, mapLayer === "incidents" && styles.toggleActive]}
+            >
+              Incidents
+            </Text>
+            <Text
+              onPress={() => setMapLayer("forecast")}
+              style={[styles.toggleBtn, mapLayer === "forecast" && styles.toggleActive]}
+            >
+              Forecast
+            </Text>
+          </View>
+        )}
 
         <View style={styles.buttonRow}>
           <Button title="Seed Demo Data" onPress={seedDemo} disabled={loading} />
@@ -215,74 +284,157 @@ export default function Hotspots() {
                 longitudeDelta: 0.25,
               }}
             >
-              {cells
-                .filter(
-                  (c) =>
-                    typeof c.grid_lat === "number" &&
-                    typeof c.grid_lon === "number"
-                )
-                .map((c) => {
-                  const tier = getRiskTier(c.risk_score);
-                  const size = getMarkerSize(tier);
-                  const colors = getMarkerColor(tier);
+              {/* --- Hotspots layer --- */}
+              {mapLayer === "hotspots" &&
+                cells
+                  .filter((c) => typeof c.grid_lat === "number" && typeof c.grid_lon === "number")
+                  .map((c) => {
+                    const tier = getRiskTier(c.risk_score);
+                    const size = getMarkerSize(tier);
+                    const colors = getMarkerColor(tier);
+                    const trendLabel =
+                      c.trend_pct === null || c.trend_pct === undefined
+                        ? "New Spike"
+                        : `${c.trend_pct > 0 ? "+" : ""}${c.trend_pct}%`;
+                    const desc = [
+                      `${tier.charAt(0).toUpperCase() + tier.slice(1)} Risk`,
+                      `Recent: ${c.recent_count} | Baseline: ${c.baseline_count}`,
+                      `Trend: ${trendLabel}`,
+                      c.top_crime_type ? `Top: ${c.top_crime_type}` : null,
+                      c.last_incident_at
+                        ? `Last: ${new Date(c.last_incident_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join("\n");
+
+                    return (
+                      <Marker
+                        key={String(c.id)}
+                        coordinate={{ latitude: c.grid_lat!, longitude: c.grid_lon! }}
+                        title={`Risk Score: ${c.risk_score}`}
+                        description={desc}
+                      >
+                        <View
+                          style={{
+                            width: size,
+                            height: size,
+                            borderRadius: size / 2,
+                            backgroundColor: colors.bg,
+                            borderWidth: 2,
+                            borderColor: colors.border,
+                          }}
+                        />
+                      </Marker>
+                    );
+                  })}
+
+              {/* --- Incidents layer --- */}
+              {mapLayer === "incidents" &&
+                events.map((evt) => {
+                  const cat = getCrimeColor(evt.offense_category || evt.incident_type);
+                  const pin = crimeColorToPin(cat);
+                  const title = evt.incident_type || "Incident";
+                  const lines = [
+                    evt.offense_category && evt.offense_category !== evt.incident_type
+                      ? evt.offense_category
+                      : null,
+                    new Date(evt.occurred_at).toLocaleString(undefined, {
+                      month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+                    }),
+                  ]
+                    .filter(Boolean)
+                    .join("\n");
 
                   return (
                     <Marker
-                      key={String(c.id)}
-                      coordinate={{ latitude: c.grid_lat!, longitude: c.grid_lon! }}
-                      title={`Risk: ${c.risk_score}`}
-                      description={`Recent: ${c.recent_count} | Baseline: ${c.baseline_count}\nCell: ${c.grid_lat!.toFixed(4)}, ${c.grid_lon!.toFixed(4)}`}
+                      key={`evt-${evt.id}`}
+                      coordinate={{ latitude: evt.lat, longitude: evt.lon }}
+                      title={title}
+                      description={lines}
+                      pinColor={pin}
+                    />
+                  );
+                })}
+
+              {/* --- Forecast layer --- */}
+              {mapLayer === "forecast" &&
+                forecast.map((fc, i) => {
+                  const maxScore = forecast[0]?.forecast_score || 1;
+                  const intensity = Math.min(fc.forecast_score / maxScore, 1);
+                  const size = 20 + intensity * 30;
+                  return (
+                    <Marker
+                      key={`fc-${i}`}
+                      coordinate={{ latitude: fc.grid_lat, longitude: fc.grid_lon }}
+                      title={`Forecast: ${fc.forecast_score}`}
+                      description={`Last 24h: ${fc.very_recent_24h} | 7d: ${fc.recent_7d} | Baseline: ${fc.baseline}`}
                     >
                       <View
                         style={{
                           width: size,
                           height: size,
                           borderRadius: size / 2,
-                          backgroundColor: colors.bg,
+                          backgroundColor: `rgba(168, 85, 247, ${0.25 + intensity * 0.45})`,
                           borderWidth: 2,
-                          borderColor: colors.border,
+                          borderColor: `rgba(147, 51, 234, ${0.7 + intensity * 0.3})`,
                         }}
                       />
                     </Marker>
                   );
                 })}
-
-              {events.map((evt) => {
-                const label = evt.offense_category || evt.incident_type;
-                const when = new Date(evt.occurred_at).toLocaleDateString(
-                  undefined,
-                  { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }
-                );
-                return (
-                  <Marker
-                    key={`evt-${evt.id}`}
-                    coordinate={{ latitude: evt.lat, longitude: evt.lon }}
-                    title={label}
-                    description={when}
-                    pinColor="#facc15"
-                  />
-                );
-              })}
             </MapView>
 
             {/* Legend */}
             <View style={styles.legend}>
-              <View style={styles.legendRow}>
-                <View style={[styles.legendDot, { backgroundColor: getMarkerColor("low").border }]} />
-                <Text style={styles.legendText}>Low (&lt;4)</Text>
-              </View>
-              <View style={styles.legendRow}>
-                <View style={[styles.legendDot, { backgroundColor: getMarkerColor("medium").border }]} />
-                <Text style={styles.legendText}>Medium (4-7)</Text>
-              </View>
-              <View style={styles.legendRow}>
-                <View style={[styles.legendDot, { backgroundColor: getMarkerColor("high").border }]} />
-                <Text style={styles.legendText}>High (≥8)</Text>
-              </View>
-              <View style={styles.legendRow}>
-                <View style={[styles.legendDot, { backgroundColor: "#facc15" }]} />
-                <Text style={styles.legendText}>Incident</Text>
-              </View>
+              {mapLayer === "hotspots" && (
+                <>
+                  <View style={styles.legendRow}>
+                    <View style={[styles.legendDot, { backgroundColor: getMarkerColor("low").border }]} />
+                    <Text style={styles.legendText}>Low (&lt;4)</Text>
+                  </View>
+                  <View style={styles.legendRow}>
+                    <View style={[styles.legendDot, { backgroundColor: getMarkerColor("medium").border }]} />
+                    <Text style={styles.legendText}>Medium (4-7)</Text>
+                  </View>
+                  <View style={styles.legendRow}>
+                    <View style={[styles.legendDot, { backgroundColor: getMarkerColor("high").border }]} />
+                    <Text style={styles.legendText}>High (≥8)</Text>
+                  </View>
+                </>
+              )}
+              {mapLayer === "incidents" && (
+                <>
+                  <View style={styles.legendRow}>
+                    <View style={[styles.legendDot, { backgroundColor: "#ef4444" }]} />
+                    <Text style={styles.legendText}>Violent</Text>
+                  </View>
+                  <View style={styles.legendRow}>
+                    <View style={[styles.legendDot, { backgroundColor: "#f59e0b" }]} />
+                    <Text style={styles.legendText}>Property</Text>
+                  </View>
+                  <View style={styles.legendRow}>
+                    <View style={[styles.legendDot, { backgroundColor: "#a855f7" }]} />
+                    <Text style={styles.legendText}>Drug/Vice</Text>
+                  </View>
+                  <View style={styles.legendRow}>
+                    <View style={[styles.legendDot, { backgroundColor: "#3b82f6" }]} />
+                    <Text style={styles.legendText}>Other</Text>
+                  </View>
+                </>
+              )}
+              {mapLayer === "forecast" && (
+                <>
+                  <View style={styles.legendRow}>
+                    <View style={[styles.legendDot, { backgroundColor: "rgba(147, 51, 234, 0.5)" }]} />
+                    <Text style={styles.legendText}>Lower Risk</Text>
+                  </View>
+                  <View style={styles.legendRow}>
+                    <View style={[styles.legendDot, { backgroundColor: "rgba(147, 51, 234, 1)" }]} />
+                    <Text style={styles.legendText}>Higher Risk</Text>
+                  </View>
+                </>
+              )}
             </View>
           </View>
         ) : (

@@ -258,22 +258,101 @@ def get_hotspots():
             .all()
         )
 
-        return {
-            "cells": [
-                {
-                    "id": c.id,
-                    "grid_lat": c.grid_lat,
-                    "grid_lon": c.grid_lon,
-                    "risk_score": c.risk_score,
-                    "recent_count": c.recent_count,
-                    "baseline_count": c.baseline_count,
-                }
-                for c in cells
-            ]
-        }
+        # Enrich each cell with incident intelligence
+        all_incidents = db.query(Incident).all()
+        # Build a grid lookup: (rounded_lat, rounded_lon) -> list of incidents
+        grid_incidents: dict[tuple[float, float], list] = {}
+        for inc in all_incidents:
+            key = (round(float(inc.lat), 2), round(float(inc.lon), 2))
+            grid_incidents.setdefault(key, []).append(inc)
+
+        enriched = []
+        for c in cells:
+            key = (float(c.grid_lat), float(c.grid_lon))
+            cell_incs = grid_incidents.get(key, [])
+
+            # Top crime type by frequency
+            type_counts: dict[str, int] = {}
+            last_at = None
+            for inc in cell_incs:
+                t = str(inc.incident_type or "unknown")
+                type_counts[t] = type_counts.get(t, 0) + 1
+                if last_at is None or inc.occurred_at > last_at:
+                    last_at = inc.occurred_at
+
+            top_crime = max(type_counts, key=type_counts.get) if type_counts else None  # type: ignore[arg-type]
+
+            # Trend
+            if c.baseline_count and c.baseline_count > 0:
+                trend_pct = round(((c.recent_count - c.baseline_count) / c.baseline_count) * 100)
+            elif c.recent_count > 0:
+                trend_pct = None  # "New Spike"
+            else:
+                trend_pct = 0
+
+            enriched.append({
+                "id": c.id,
+                "grid_lat": c.grid_lat,
+                "grid_lon": c.grid_lon,
+                "risk_score": c.risk_score,
+                "recent_count": c.recent_count,
+                "baseline_count": c.baseline_count,
+                "top_crime_type": top_crime,
+                "last_incident_at": last_at.isoformat() if last_at else None,
+                "trend_pct": trend_pct,
+            })
+
+        return {"cells": enriched}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"get_hotspots failed: {e}")
+    finally:
+        db.close()
+
+
+@app.get("/hotspots/forecast")
+def hotspot_forecast(source: str = "sdpd_nibrs"):
+    """Lightweight predictive layer: which cells stay hot in the next 12h."""
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        now = datetime.utcnow()
+        incidents = db.query(Incident).filter(Incident.source == source).all()
+        if not incidents:
+            return {"cells": []}
+
+        grid: dict[tuple[float, float], dict] = {}
+        for inc in incidents:
+            key = (round(float(inc.lat), 2), round(float(inc.lon), 2))
+            if key not in grid:
+                grid[key] = {"recent": 0, "very_recent": 0, "baseline": 0}
+
+            age_hours = max(0, (now - inc.occurred_at).total_seconds() / 3600)
+            if age_hours <= 24:
+                grid[key]["very_recent"] += 1
+            if age_hours <= 168:  # 7 days
+                grid[key]["recent"] += 1
+            else:
+                grid[key]["baseline"] += 1
+
+        forecast_cells = []
+        for (lat, lon), v in grid.items():
+            score = (v["very_recent"] * 5) + (v["recent"] * 2) + v["baseline"]
+            if score > 0:
+                forecast_cells.append({
+                    "grid_lat": lat,
+                    "grid_lon": lon,
+                    "forecast_score": score,
+                    "very_recent_24h": v["very_recent"],
+                    "recent_7d": v["recent"],
+                    "baseline": v["baseline"],
+                })
+
+        forecast_cells.sort(key=lambda x: x["forecast_score"], reverse=True)
+        return {"cells": forecast_cells[:30]}
+
+    except Exception as e:
+        raise HTTPException(500, f"hotspot_forecast failed: {e}")
     finally:
         db.close()
 
