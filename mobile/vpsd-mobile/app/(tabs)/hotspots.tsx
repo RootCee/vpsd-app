@@ -3,6 +3,7 @@ import {
   View,
   Text,
   Button,
+  TouchableOpacity,
   FlatList,
   StyleSheet,
   Alert,
@@ -131,6 +132,34 @@ export default function Hotspots() {
   const [mapLayer, setMapLayer] = useState<"hotspots" | "incidents" | "forecast">("hotspots");
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
 
+  // Lazy-fetch only the data needed for a given layer
+  const fetchLayer = async (layer: "hotspots" | "incidents" | "forecast") => {
+    setLoading(true);
+    try {
+      if (layer === "hotspots" && cells.length === 0) {
+        const res = await fetch(`${API_BASE}/hotspots`);
+        const data = await safeJson<HotspotsResponse>(res);
+        setCells(Array.isArray(data.cells) ? data.cells : []);
+      } else if (layer === "incidents" && events.length === 0) {
+        const res = await fetch(`${API_BASE}/events?days=7`);
+        const data = await safeJson<{ items: Incident[] }>(res);
+        const items = Array.isArray(data.items) ? data.items : [];
+        setEvents(items);
+        if (items.length > 0) setLastUpdated(items[0].occurred_at);
+      } else if (layer === "forecast" && forecast.length === 0) {
+        const res = await fetch(`${API_BASE}/hotspots/forecast?source=sdpd_nibrs`);
+        const data = await safeJson<{ cells: ForecastCell[] }>(res);
+        setForecast(Array.isArray(data.cells) ? data.cells : []);
+      }
+    } catch (e: any) {
+      console.log(e?.message || e);
+      Alert.alert("Load Error", e?.message ? String(e.message) : "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Full refresh — re-fetches all layers, used by Refresh button
   const refresh = async () => {
     setLoading(true);
     try {
@@ -149,16 +178,10 @@ export default function Hotspots() {
       const fcData = await safeJson<{ cells: ForecastCell[] }>(fcRes);
       setForecast(Array.isArray(fcData.cells) ? fcData.cells : []);
 
-      // Last updated = most recent occurred_at
-      if (items.length > 0) {
-        setLastUpdated(items[0].occurred_at);
-      }
+      if (items.length > 0) setLastUpdated(items[0].occurred_at);
     } catch (e: any) {
       console.log(e?.message || e);
-      Alert.alert(
-        "Hotspots Error",
-        e?.message ? String(e.message) : "Unknown error"
-      );
+      Alert.alert("Hotspots Error", e?.message ? String(e.message) : "Unknown error");
     } finally {
       setLoading(false);
     }
@@ -197,7 +220,6 @@ export default function Hotspots() {
       const data = await safeJson<{ inserted: number; source: string }>(res);
       const inserted = data.inserted ?? 0;
 
-      // Compute hotspot cells from the pulled incidents
       const hotRes = await fetch(
         `${API_BASE}/hotspots/run?source=${data.source || "sdpd_nibrs"}`,
         { method: "POST" }
@@ -217,9 +239,15 @@ export default function Hotspots() {
     }
   };
 
+  // On mount, lazy-fetch only the default layer
   useEffect(() => {
-    refresh();
+    fetchLayer("hotspots");
   }, []);
+
+  // When layer changes, lazy-fetch if not cached
+  useEffect(() => {
+    fetchLayer(mapLayer);
+  }, [mapLayer]);
 
   // Pick a “center” for the map. If we have data, use the first cell.
   const centerLat =
@@ -232,7 +260,9 @@ export default function Hotspots() {
       <View style={styles.container}>
         <Text style={styles.title}>📍 Hotspots</Text>
         <Text style={styles.sub}>
-          Cells: {cells.length} · Incidents: {events.length}
+          {mapLayer === "hotspots" && `Cells: ${cells.length}`}
+          {mapLayer === "incidents" && `Incidents: ${events.length}`}
+          {mapLayer === "forecast" && `Forecast cells: ${forecast.length}`}
           {lastUpdated ? ` · Updated: ${new Date(lastUpdated).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : ""}
         </Text>
 
@@ -275,7 +305,13 @@ export default function Hotspots() {
         )}
 
         <View style={styles.buttonRow}>
-          <Button title="Seed Demo Data" onPress={seedDemo} disabled={loading} />
+          <TouchableOpacity
+            onPress={seedDemo}
+            disabled={loading}
+            style={styles.demoBtn}
+          >
+            <Text style={styles.demoBtnText}>Demo Only</Text>
+          </TouchableOpacity>
           <Button title="Pull Real Events" onPress={pullEvents} disabled={loading} />
           <Button
             title={loading ? "Loading..." : "Refresh"}
@@ -295,8 +331,8 @@ export default function Hotspots() {
                 longitudeDelta: 0.25,
               }}
             >
-              {/* --- Hotspot circles (visible in hotspots + forecast layers) --- */}
-              {(mapLayer === "hotspots" || mapLayer === "forecast") &&
+              {/* --- Hotspot circles --- */}
+              {mapLayer === "hotspots" &&
                 cells
                   .filter((c) => typeof c.grid_lat === "number" && typeof c.grid_lon === "number")
                   .map((c) => {
@@ -335,17 +371,17 @@ export default function Hotspots() {
                             width: size,
                             height: size,
                             borderRadius: size / 2,
-                            backgroundColor: mapLayer === "forecast" ? "rgba(59,130,246,0.15)" : colors.bg,
+                            backgroundColor: colors.bg,
                             borderWidth: 2,
-                            borderColor: mapLayer === "forecast" ? "rgba(59,130,246,0.3)" : colors.border,
+                            borderColor: colors.border,
                           }}
                         />
                       </Marker>
                     );
                   })}
 
-              {/* --- Incident pins (visible in hotspots + incidents layers) --- */}
-              {(mapLayer === "hotspots" || mapLayer === "incidents") &&
+              {/* --- Incident pins --- */}
+              {mapLayer === "incidents" &&
                 events.map((evt) => {
                   const cat = getCrimeColor(evt.offense_category || evt.incident_type);
                   const pin = crimeColorToPin(cat);
@@ -413,8 +449,8 @@ export default function Hotspots() {
 
             {/* Legend */}
             <View style={styles.legend}>
-              {/* Hotspot risk levels — shown in hotspots + forecast */}
-              {(mapLayer === "hotspots" || mapLayer === "forecast") && (
+              {/* Hotspot risk levels */}
+              {mapLayer === "hotspots" && (
                 <>
                   <View style={styles.legendRow}>
                     <View style={[styles.legendDot, { backgroundColor: getMarkerColor("low").border }]} />
@@ -430,8 +466,8 @@ export default function Hotspots() {
                   </View>
                 </>
               )}
-              {/* Incident categories — shown in hotspots + incidents */}
-              {(mapLayer === "hotspots" || mapLayer === "incidents") && (
+              {/* Incident categories */}
+              {mapLayer === "incidents" && (
                 <>
                   <View style={styles.legendRow}>
                     <View style={[styles.legendDot, { backgroundColor: "#ef4444", width: 12, height: 12, borderRadius: 6 }]} />
@@ -578,4 +614,18 @@ const styles = StyleSheet.create({
   cardTitle: { fontSize: 18, fontWeight: "800", color: "white" },
   cardText: { marginTop: 6, color: "#dcdcdc" },
   cardSub: { marginTop: 6, color: "#9aa0a6", fontSize: 12 },
+
+  demoBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#333",
+    backgroundColor: "transparent",
+  },
+  demoBtnText: {
+    color: "#666",
+    fontSize: 12,
+    fontWeight: "600",
+  },
 });
