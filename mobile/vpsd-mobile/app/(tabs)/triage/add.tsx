@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { View, Text, TextInput, Button, StyleSheet, Alert } from "react-native";
 import { useRouter } from "expo-router";
-import { API_BASE } from "../../../src/config";
+import { authenticatedFetch, safeJson } from "../../../src/api/client";
 
 export default function AddClient() {
   const router = useRouter();
@@ -16,13 +16,13 @@ export default function AddClient() {
 
     setSaving(true);
     try {
-      const res = await fetch(`${API_BASE}/triage/clients`, {
+      const res = await authenticatedFetch("/triage/clients", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ display_name: name, neighborhood, notes }),
       });
 
-      const data = await res.json();
+      const data = await safeJson<{ client?: { id: number }; detail?: string }>(res);
+      if (!res.ok) throw new Error(data.detail || `Server error ${res.status}`);
       const id = data?.client?.id;
       if (!id) throw new Error("Failed to create client");
 

@@ -121,7 +121,11 @@ export default function Triage() {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      await safeJson(res);
+      const data = await safeJson<{ client?: { id: number }; detail?: string }>(res);
+
+      if (!res.ok) {
+        throw new Error(data.detail || `Server error ${res.status}`);
+      }
 
       setShowAdd(false);
       resetForm();
