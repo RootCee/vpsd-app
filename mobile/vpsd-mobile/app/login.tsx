@@ -9,16 +9,13 @@ import {
   ActivityIndicator,
   Platform,
 } from "react-native";
-import { useRouter } from "expo-router";
 import { useAuth } from "../src/auth/AuthContext";
 
 export default function LoginScreen() {
-  const router = useRouter();
-  const { login, register } = useAuth();
+  const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [devMenuPresses, setDevMenuPresses] = useState(0);
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
@@ -43,69 +40,11 @@ export default function LoginScreen() {
     }
   };
 
-  const handleDevMenu = () => {
-    if (!__DEV__) return;
-
-    const newCount = devMenuPresses + 1;
-    setDevMenuPresses(newCount);
-
-    if (newCount >= 3) {
-      setDevMenuPresses(0);
-      Alert.alert(
-        "🔧 Dev Menu",
-        "Create a demo user?",
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Create Demo User",
-            onPress: async () => {
-              setLoading(true);
-              try {
-                await register("demo@vpsd.app", "demo123");
-                Alert.alert("Success", "Demo user created!\n\nEmail: demo@vpsd.app\nPassword: demo123");
-              } catch (error: any) {
-                const msg = error.message || "Failed to create demo user";
-                // If user already exists, show login option
-                if (msg.includes("already registered")) {
-                  Alert.alert(
-                    "User Exists",
-                    "Demo user already exists. Login instead?",
-                    [
-                      { text: "Cancel", style: "cancel" },
-                      {
-                        text: "Login",
-                        onPress: async () => {
-                          setEmail("demo@vpsd.app");
-                          setPassword("demo123");
-                          try {
-                            await login("demo@vpsd.app", "demo123");
-                          } catch (err: any) {
-                            Alert.alert("Error", err.message || "Login failed");
-                          }
-                        },
-                      },
-                    ]
-                  );
-                } else {
-                  Alert.alert("Error", msg);
-                }
-              } finally {
-                setLoading(false);
-              }
-            },
-          },
-        ]
-      );
-    }
-  };
-
   return (
     <View style={styles.container}>
       <View style={styles.card}>
         <Text style={styles.title}>👤 Login</Text>
-        <Pressable onPress={handleDevMenu}>
-          <Text style={styles.subtitle}>VPSD App</Text>
-        </Pressable>
+        <Text style={styles.subtitle}>Hope Bridge</Text>
 
         <Text style={styles.label}>Email</Text>
         <TextInput
@@ -142,13 +81,7 @@ export default function LoginScreen() {
           )}
         </Pressable>
 
-        <Pressable
-          style={styles.linkButton}
-          onPress={() => router.push("/register")}
-          disabled={loading}
-        >
-          <Text style={styles.linkText}>Don't have an account? Register</Text>
-        </Pressable>
+        <Text style={styles.hintText}>Contact your admin for an account.</Text>
       </View>
     </View>
   );
@@ -211,12 +144,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "900",
   },
-  linkButton: {
-    alignItems: "center",
-    paddingVertical: 8,
-  },
-  linkText: {
-    color: "#60a5fa",
-    fontWeight: "700",
+  hintText: {
+    color: "#666",
+    fontWeight: "600",
+    textAlign: "center",
+    fontSize: 13,
   },
 });

@@ -62,10 +62,18 @@ def health():
 # ---------------------------
 # AUTHENTICATION
 # ---------------------------
-@app.post("/auth/register")
-def register(payload: dict):
+@app.post("/auth/create-user")
+def create_user(payload: dict, current_user: User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin access required")
+
     email = (payload.get("email") or "").strip().lower()
     password = (payload.get("password") or "").strip()
+    name = (payload.get("name") or "").strip() or None
+    role = (payload.get("role") or "member").strip()
+
+    if role not in ("admin", "member"):
+        raise HTTPException(400, "role must be 'admin' or 'member'")
 
     if not email or "@" not in email:
         raise HTTPException(400, "Valid email is required")
@@ -75,27 +83,22 @@ def register(payload: dict):
 
     db = SessionLocal()
     try:
-        # Check if user already exists
         existing = db.query(User).filter(User.email == email).first()
         if existing:
             raise HTTPException(400, "Email already registered")
 
-        # Create new user
         hashed_pwd = hash_password(password)
-        user = User(email=email, hashed_password=hashed_pwd, is_active=True)
+        user = User(email=email, hashed_password=hashed_pwd, name=name, role=role, is_active=True)
         db.add(user)
         db.commit()
         db.refresh(user)
 
-        # Generate access token
-        access_token = create_access_token(data={"sub": user.id})
-
         return {
-            "access_token": access_token,
-            "token_type": "bearer",
             "user": {
                 "id": user.id,
+                "name": user.name,
                 "email": user.email,
+                "role": user.role,
                 "is_active": user.is_active,
             }
         }
@@ -104,9 +107,22 @@ def register(payload: dict):
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"register failed: {e}")
+        raise HTTPException(status_code=500, detail=f"create_user failed: {e}")
     finally:
         db.close()
+
+
+@app.get("/auth/me")
+def auth_me(current_user: User = Depends(get_current_user)):
+    return {
+        "user": {
+            "id": current_user.id,
+            "name": current_user.name,
+            "email": current_user.email,
+            "role": current_user.role,
+            "is_active": current_user.is_active,
+        }
+    }
 
 
 @app.post("/auth/login")
@@ -137,7 +153,9 @@ def login(payload: dict):
             "token_type": "bearer",
             "user": {
                 "id": user.id,
+                "name": user.name,
                 "email": user.email,
+                "role": user.role,
                 "is_active": user.is_active,
             }
         }
@@ -154,7 +172,7 @@ def login(payload: dict):
 # HOTSPOTS
 # ---------------------------
 @app.post("/hotspots/seed")
-def seed_hotspots(source: str = "sdpd_demo", n: int = 120):
+def seed_hotspots(source: str = "sdpd_demo", n: int = 120, current_user: User = Depends(get_current_user)):
     db = SessionLocal()
 
     centers = [
@@ -198,7 +216,7 @@ def seed_hotspots(source: str = "sdpd_demo", n: int = 120):
 
 
 @app.post("/hotspots/run")
-def compute_hotspots(source: str = "sdpd_demo"):
+def compute_hotspots(source: str = "sdpd_demo", current_user: User = Depends(get_current_user)):
     db = SessionLocal()
     try:
         # clear previous cells
@@ -248,7 +266,7 @@ def compute_hotspots(source: str = "sdpd_demo"):
 
 
 @app.get("/hotspots")
-def get_hotspots():
+def get_hotspots(current_user: User = Depends(get_current_user)):
     db = SessionLocal()
     try:
         cells = (
@@ -324,7 +342,7 @@ def get_hotspots():
 
 
 @app.get("/hotspots/forecast")
-def hotspot_forecast(source: str = "sdpd_nibrs"):
+def hotspot_forecast(source: str = "sdpd_nibrs", current_user: User = Depends(get_current_user)):
     """Lightweight predictive layer: which cells stay hot in the next 12h."""
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
@@ -718,7 +736,7 @@ def _seed_demo_events(db, days: int, n: int = 150) -> int:
 
 
 @app.post("/events/pull")
-def pull_events(days: int = 7):
+def pull_events(days: int = 7, current_user: User = Depends(get_current_user)):
     """Fetch SDPD NIBRS incidents from ArcGIS; fall back to demo data."""
     Base.metadata.create_all(bind=engine)
 
@@ -834,7 +852,7 @@ def pull_events(days: int = 7):
 
 
 @app.get("/events")
-def get_events(days: int = 7):
+def get_events(days: int = 7, current_user: User = Depends(get_current_user)):
     """Return incidents from the last `days` days for the map."""
     Base.metadata.create_all(bind=engine)
     since = datetime.utcnow() - timedelta(days=days)
@@ -871,7 +889,7 @@ def get_events(days: int = 7):
 # SCREENING (placeholder)
 # ---------------------------
 @app.post("/screening/submit")
-def screening_submit(payload: dict):
+def screening_submit(payload: dict, current_user: User = Depends(get_current_user)):
     notes = (payload.get("notes") or "").lower()
     risk_words = ["weapon", "kill", "gun", "danger", "suicidal", "harm"]
     is_escalated = any(w in notes for w in risk_words)

@@ -4,7 +4,9 @@ import { API_BASE } from "../config";
 
 type User = {
   id: number;
+  name: string | null;
   email: string;
+  role: string;
   is_active: boolean;
 };
 
@@ -14,7 +16,6 @@ type AuthContextType = {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 };
 
@@ -129,77 +130,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const register = async (email: string, password: string) => {
-    if (__DEV__) {
-      console.log("[AuthContext] Attempting registration for:", email);
-      console.log("[AuthContext] API_BASE:", API_BASE);
-    }
-
-    try {
-      const res = await fetch(`${API_BASE}/auth/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (__DEV__) {
-        console.log("[AuthContext] Register response status:", res.status);
-      }
-
-      if (!res.ok) {
-        // Try to parse JSON error, fallback to text, then fallback to generic message
-        let errorMessage = "Registration failed";
-        try {
-          const errorData = await res.json();
-          errorMessage = errorData.detail || errorData.message || JSON.stringify(errorData);
-        } catch {
-          // If JSON parsing fails, try to read as text
-          try {
-            const errorText = await res.text();
-            errorMessage = errorText || `Registration failed with status ${res.status}`;
-          } catch {
-            errorMessage = `Registration failed with status ${res.status}`;
-          }
-        }
-
-        if (__DEV__) {
-          console.error("[AuthContext] Registration failed:", errorMessage);
-        }
-        throw new Error(errorMessage);
-      }
-
-      const data = await res.json();
-
-      if (__DEV__) {
-        console.log("[AuthContext] Register response data:", {
-          hasAccessToken: !!data.access_token,
-          hasUser: !!data.user,
-        });
-      }
-
-      if (!data.access_token) {
-        throw new Error("No access token received from server");
-      }
-
-      await saveToken(data.access_token);
-      setTokenState(data.access_token);
-      setUser(data.user || null);
-
-      if (__DEV__) {
-        console.log("[AuthContext] Registration successful, token saved");
-      }
-    } catch (error: any) {
-      if (__DEV__) {
-        console.error("[AuthContext] Registration error:", error);
-      }
-      // Re-throw with a more user-friendly message if it's a network error
-      if (error.message.includes("Network request failed") || error.message.includes("Failed to fetch")) {
-        throw new Error("Network error. Please check your connection and try again.");
-      }
-      throw error;
-    }
-  };
-
   const logout = async () => {
     if (__DEV__) {
       console.log("[AuthContext] Logging out, clearing token");
@@ -215,7 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAuthenticated = !!token;
 
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, isAuthenticated, login, register, logout }}>
+    <AuthContext.Provider value={{ user, token, isLoading, isAuthenticated, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

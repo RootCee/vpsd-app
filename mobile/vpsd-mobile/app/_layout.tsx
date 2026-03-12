@@ -28,8 +28,7 @@ function RootLayoutNav() {
   useEffect(() => {
     if (isLoading) return;
 
-    // Check if we're in an auth route (login or register)
-    const inAuthGroup = segments[0] === 'login' || segments[0] === 'register';
+    const inAuthGroup = segments[0] === 'login';
 
     if (__DEV__) {
       console.log('[_layout.tsx] Auth Guard Check:');
