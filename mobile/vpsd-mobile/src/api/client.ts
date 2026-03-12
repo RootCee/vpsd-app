@@ -10,6 +10,10 @@ export async function authenticatedFetch(
 ): Promise<Response> {
   const token = await getToken();
 
+  if (__DEV__) {
+    console.log("[authenticatedFetch]", endpoint, "token?", token ? token.substring(0, 15) + "..." : "NULL");
+  }
+
   const headers: HeadersInit = {
     "Content-Type": "application/json",
     ...options.headers,

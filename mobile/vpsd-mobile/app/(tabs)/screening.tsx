@@ -1,15 +1,14 @@
 import React, { useState } from "react";
 import { View, Text, TextInput, Button, StyleSheet } from "react-native";
-import { API_BASE } from "../../src/config";
+import { authenticatedFetch } from "../../src/api/client";
 
 export default function Screening() {
   const [notes, setNotes] = useState("");
   const [result, setResult] = useState<any>(null);
 
   async function submit() {
-    const res = await fetch(`${API_BASE}/screening/submit`, {
+    const res = await authenticatedFetch("/screening/submit", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ notes }),
     });
     setResult(await res.json());

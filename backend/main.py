@@ -145,8 +145,8 @@ def login(payload: dict):
         if not user.is_active:
             raise HTTPException(403, "Account is inactive")
 
-        # Generate access token
-        access_token = create_access_token(data={"sub": user.id})
+        # Generate access token (sub must be string per JWT spec)
+        access_token = create_access_token(data={"sub": str(user.id)})
 
         return {
             "access_token": access_token,

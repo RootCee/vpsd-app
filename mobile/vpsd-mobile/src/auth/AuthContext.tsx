@@ -45,12 +45,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const savedToken = await getToken();
       if (__DEV__) {
         console.log("[AuthContext] loadToken - token exists:", !!savedToken);
-        if (savedToken) {
-          console.log("[AuthContext] Token preview:", savedToken.substring(0, 20) + "...");
-        }
       }
       if (savedToken) {
-        setTokenState(savedToken);
+        // Validate token against server before trusting it
+        try {
+          const res = await fetch(`${API_BASE}/auth/me`, {
+            headers: { Authorization: `Bearer ${savedToken}` },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setTokenState(savedToken);
+            setUser(data.user || null);
+            if (__DEV__) {
+              console.log("[AuthContext] Token valid, user:", data.user?.email);
+            }
+          } else {
+            // Token is expired or invalid — clear it
+            if (__DEV__) {
+              console.log("[AuthContext] Token invalid (status", res.status, "), clearing");
+            }
+            await clearToken();
+          }
+        } catch {
+          // Network error — trust the saved token so offline still works
+          if (__DEV__) {
+            console.log("[AuthContext] Network error validating token, keeping it");
+          }
+          setTokenState(savedToken);
+        }
       }
     } catch (error) {
       console.error("[AuthContext] Failed to load token:", error);

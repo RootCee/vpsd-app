@@ -9,7 +9,7 @@ import {
   Alert,
 } from "react-native";
 import MapView, { Marker } from "react-native-maps";
-import { API_BASE } from "../../src/config";
+import { authenticatedFetch } from "../../src/api/client";
 
 type HotspotCell = {
   id: number;
@@ -137,18 +137,24 @@ export default function Hotspots() {
     setLoading(true);
     try {
       if (layer === "hotspots" && cells.length === 0) {
-        const res = await fetch(`${API_BASE}/hotspots`);
+        const res = await authenticatedFetch("/hotspots");
+        if (!res.ok) throw new Error(`Hotspots ${res.status}: ${await res.text()}`);
         const data = await safeJson<HotspotsResponse>(res);
+        if (__DEV__) console.log("[hotspots] fetched", data.cells?.length, "cells");
         setCells(Array.isArray(data.cells) ? data.cells : []);
       } else if (layer === "incidents" && events.length === 0) {
-        const res = await fetch(`${API_BASE}/events?days=7`);
+        const res = await authenticatedFetch("/events?days=7");
+        if (!res.ok) throw new Error(`Events ${res.status}: ${await res.text()}`);
         const data = await safeJson<{ items: Incident[] }>(res);
         const items = Array.isArray(data.items) ? data.items : [];
+        if (__DEV__) console.log("[hotspots] fetched", items.length, "incidents");
         setEvents(items);
         if (items.length > 0) setLastUpdated(items[0].occurred_at);
       } else if (layer === "forecast" && forecast.length === 0) {
-        const res = await fetch(`${API_BASE}/hotspots/forecast?source=sdpd_nibrs`);
+        const res = await authenticatedFetch("/hotspots/forecast?source=sdpd_nibrs");
+        if (!res.ok) throw new Error(`Forecast ${res.status}: ${await res.text()}`);
         const data = await safeJson<{ cells: ForecastCell[] }>(res);
+        if (__DEV__) console.log("[hotspots] fetched", data.cells?.length, "forecast cells");
         setForecast(Array.isArray(data.cells) ? data.cells : []);
       }
     } catch (e: any) {
@@ -164,9 +170,9 @@ export default function Hotspots() {
     setLoading(true);
     try {
       const [hotRes, evtRes, fcRes] = await Promise.all([
-        fetch(`${API_BASE}/hotspots`),
-        fetch(`${API_BASE}/events?days=7`),
-        fetch(`${API_BASE}/hotspots/forecast?source=sdpd_nibrs`),
+        authenticatedFetch("/hotspots"),
+        authenticatedFetch("/events?days=7"),
+        authenticatedFetch("/hotspots/forecast?source=sdpd_nibrs"),
       ]);
       const hotData = await safeJson<HotspotsResponse>(hotRes);
       setCells(Array.isArray(hotData.cells) ? hotData.cells : []);
@@ -190,13 +196,12 @@ export default function Hotspots() {
   const seedDemo = async () => {
     setLoading(true);
     try {
-      const seedRes = await fetch(
-        `${API_BASE}/hotspots/seed?source=sdpd_demo&n=120`,
-        { method: "POST" }
-      );
+      const seedRes = await authenticatedFetch("/hotspots/seed?source=sdpd_demo&n=120", {
+        method: "POST",
+      });
       await safeJson(seedRes);
 
-      const runRes = await fetch(`${API_BASE}/hotspots/run?source=sdpd_demo`, {
+      const runRes = await authenticatedFetch("/hotspots/run?source=sdpd_demo", {
         method: "POST",
       });
       await safeJson(runRes);
@@ -214,17 +219,28 @@ export default function Hotspots() {
   const pullEvents = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/events/pull?days=7`, {
+      const res = await authenticatedFetch("/events/pull?days=7", {
         method: "POST",
       });
+      if (__DEV__) console.log("[hotspots] pull response status:", res.status);
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Pull failed (${res.status}): ${errText}`);
+      }
       const data = await safeJson<{ inserted: number; source: string }>(res);
+      if (__DEV__) console.log("[hotspots] pull result:", data);
       const inserted = data.inserted ?? 0;
 
-      const hotRes = await fetch(
-        `${API_BASE}/hotspots/run?source=${data.source || "sdpd_nibrs"}`,
+      const hotRes = await authenticatedFetch(
+        `/hotspots/run?source=${data.source || "sdpd_nibrs"}`,
         { method: "POST" }
       );
+      if (!hotRes.ok) {
+        const errText = await hotRes.text();
+        throw new Error(`Hotspot run failed (${hotRes.status}): ${errText}`);
+      }
       const hotData = await safeJson<{ cells: number }>(hotRes);
+      if (__DEV__) console.log("[hotspots] run result:", hotData);
 
       await refresh();
       Alert.alert(
@@ -232,7 +248,7 @@ export default function Hotspots() {
         `${inserted} incidents from ${data.source} and computed ${hotData.cells ?? 0} hotspot cells`
       );
     } catch (e: any) {
-      console.log(e?.message || e);
+      console.log("[hotspots] pullEvents error:", e?.message || e);
       Alert.alert("Pull Error", e?.message ? String(e.message) : "Unknown error");
     } finally {
       setLoading(false);
