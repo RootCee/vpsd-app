@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { getToken, setToken as saveToken, clearToken } from "./token";
 import { API_BASE } from "../config";
+import { ApiError, getErrorMessage, parseApiResponse } from "../api/client";
 
 type User = {
   id: number;
@@ -53,7 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             headers: { Authorization: `Bearer ${savedToken}` },
           });
           if (res.ok) {
-            const data = await res.json();
+            const data = await parseApiResponse<{ user?: User | null }>(res, "Could not restore your session.");
             setTokenState(savedToken);
             setUser(data.user || null);
             if (__DEV__) {
@@ -98,29 +99,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.log("[AuthContext] Login response status:", res.status);
       }
 
-      if (!res.ok) {
-        // Try to parse JSON error, fallback to text, then fallback to generic message
-        let errorMessage = "Login failed";
-        try {
-          const errorData = await res.json();
-          errorMessage = errorData.detail || errorData.message || JSON.stringify(errorData);
-        } catch {
-          // If JSON parsing fails, try to read as text
-          try {
-            const errorText = await res.text();
-            errorMessage = errorText || `Login failed with status ${res.status}`;
-          } catch {
-            errorMessage = `Login failed with status ${res.status}`;
-          }
-        }
-
-        if (__DEV__) {
-          console.error("[AuthContext] Login failed:", errorMessage);
-        }
-        throw new Error(errorMessage);
-      }
-
-      const data = await res.json();
+      const data = await parseApiResponse<{ access_token?: string; user?: User | null }>(
+        res,
+        "Unable to sign in. Please check your email and password."
+      );
 
       if (__DEV__) {
         console.log("[AuthContext] Login response data:", {
@@ -144,11 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (__DEV__) {
         console.error("[AuthContext] Login error:", error);
       }
-      // Re-throw with a more user-friendly message if it's a network error
-      if (error.message.includes("Network request failed") || error.message.includes("Failed to fetch")) {
-        throw new Error("Network error. Please check your connection and try again.");
-      }
-      throw error;
+      throw new ApiError(getErrorMessage(error, "Unable to sign in. Please try again."));
     }
   };
 

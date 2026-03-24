@@ -11,7 +11,11 @@ import {
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { API_BASE } from "../../../src/config";
+import {
+  authenticatedFetch,
+  getErrorMessage,
+  parseApiResponse,
+} from "../../../src/api/client";
 
 type Contact = {
   id: number;
@@ -77,36 +81,41 @@ export default function ClientDetail() {
 
   const load = async () => {
     try {
-      const res = await fetch(`${API_BASE}/triage/clients/${clientId}`);
-      const data = await res.json();
-      setClient(data.client);
+      const res = await authenticatedFetch(`/triage/clients/${clientId}`);
+      const data = await parseApiResponse<{ client?: Client | null; contacts?: Contact[] }>(
+        res,
+        "Unable to load this client."
+      );
+      setClient(data.client ?? null);
       setContacts(data.contacts || []);
 
       const iso = data.client?.follow_up_at;
       setFollowUpDate(iso ? new Date(iso) : null);
 
       // Context (nearest hotspot)
-      const ctxRes = await fetch(`${API_BASE}/triage/clients/${clientId}/context`);
-      const ctx = await ctxRes.json();
+      const ctxRes = await authenticatedFetch(`/triage/clients/${clientId}/context`);
+      const ctx = await parseApiResponse<{ nearest_hotspot?: NearestHotspot }>(
+        ctxRes,
+        "Unable to load client context."
+      );
       setNearest(ctx.nearest_hotspot ?? null);
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Failed to load client");
+      Alert.alert("Load Failed", getErrorMessage(e, "Failed to load client."));
     }
   };
 
   const logContact = async (outcome: string, note: string) => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_BASE}/triage/clients/${clientId}/contacts`, {
+      const res = await authenticatedFetch(`/triage/clients/${clientId}/contacts`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ outcome, note }),
       });
-      if (!res.ok) throw new Error("Failed to log contact");
+      await parseApiResponse(res, "Unable to log this contact.");
       await load();
       Alert.alert("Success", "Contact logged");
     } catch (e: any) {
-      Alert.alert("Log Error", e?.message || "Failed to log contact");
+      Alert.alert("Log Failed", getErrorMessage(e, "Failed to log contact."));
     } finally {
       setSaving(false);
     }
@@ -137,13 +146,12 @@ export default function ClientDetail() {
         need_transport: client.need_transport,
       };
 
-      const res = await fetch(`${API_BASE}/triage/clients/${clientId}`, {
+      const res = await authenticatedFetch(`/triage/clients/${clientId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const data = await parseApiResponse<{ client?: Client | null }>(res, "Unable to save the client plan.");
       if (!data?.client?.id) throw new Error("Save failed");
 
       setClient(data.client);
@@ -153,7 +161,7 @@ export default function ClientDetail() {
       Alert.alert("Saved", "Plan updated");
       await load(); // refresh context too
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Could not save plan");
+      Alert.alert("Save Failed", getErrorMessage(e, "Could not save plan."));
     } finally {
       setSaving(false);
     }

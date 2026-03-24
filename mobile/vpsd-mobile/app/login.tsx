@@ -7,7 +7,6 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
-  Platform,
 } from "react-native";
 import { useAuth } from "../src/auth/AuthContext";
 
@@ -34,7 +33,7 @@ export default function LoginScreen() {
       if (__DEV__) {
         console.error("[login.tsx] Login failed:", error);
       }
-      Alert.alert("Login Failed", error.message || "Invalid credentials");
+      Alert.alert("Login Failed", error?.message || "Unable to sign in right now.");
     } finally {
       setLoading(false);
     }
@@ -43,7 +42,7 @@ export default function LoginScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.card}>
-        <Text style={styles.title}>👤 Login</Text>
+        <Text style={styles.title}>Sign In</Text>
         <Text style={styles.subtitle}>Hope Bridge</Text>
 
         <Text style={styles.label}>Email</Text>

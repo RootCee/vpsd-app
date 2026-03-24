@@ -1,16 +1,16 @@
 {
   "expo": {
-    "name": "vpsd-mobile",
-    "slug": "vpsd-mobile",
+    "name": "Hope Bridge",
+    "slug": "hope-bridge",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "vpsdmobile",
+    "scheme": "hopebridge",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.rootcee.vpsdmobile",
+      "bundleIdentifier": "com.hopebridge.app",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -24,7 +24,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.rootcee.vpsdmobile"
+      "package": "com.hopebridge.app"
     },
     "web": {
       "output": "static",

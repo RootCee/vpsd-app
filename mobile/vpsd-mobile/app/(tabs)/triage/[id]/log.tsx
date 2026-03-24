@@ -1,7 +1,11 @@
 import React, { useState } from "react";
 import { View, Text, Button, TextInput, StyleSheet, Alert } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { API_BASE } from "../../../../src/config";
+import {
+  authenticatedFetch,
+  getErrorMessage,
+  parseApiResponse,
+} from "../../../../src/api/client";
 
 export default function LogContact() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -15,17 +19,16 @@ export default function LogContact() {
   const save = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_BASE}/triage/clients/${clientId}/contacts`, {
+      const res = await authenticatedFetch(`/triage/clients/${clientId}/contacts`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ outcome, note }),
       });
-      const data = await res.json();
+      const data = await parseApiResponse<{ contact?: { id: number } }>(res, "Unable to log this contact.");
       if (!data?.contact?.id) throw new Error("Failed to log contact");
 
       router.replace(`/(tabs)/triage/${clientId}`);
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Could not log contact");
+      Alert.alert("Save Failed", getErrorMessage(e, "Could not log contact."));
     } finally {
       setSaving(false);
     }

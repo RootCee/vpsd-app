@@ -13,7 +13,7 @@ import {
   Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { authenticatedFetch, safeJson } from "../../../src/api/client";
+import { authenticatedFetch, getErrorMessage, parseApiResponse } from "../../../src/api/client";
 import { useAuth } from "../../../src/auth/AuthContext";
 
 type QueueItem = {
@@ -87,11 +87,11 @@ export default function Triage() {
     setLoading(true);
     try {
       const res = await authenticatedFetch("/triage/queue");
-      const data = await safeJson<QueueResponse>(res);
+      const data = await parseApiResponse<QueueResponse>(res, "Unable to load the triage queue.");
       setItems(Array.isArray(data.items) ? data.items : []);
     } catch (e: any) {
-      console.log(e?.message || e);
-      Alert.alert("Triage Error", e?.message ? String(e.message) : "Unknown error");
+      if (__DEV__) console.log(e?.message || e);
+      Alert.alert("Triage Unavailable", getErrorMessage(e, "Please try again."));
     } finally {
       setLoading(false);
     }
@@ -121,18 +121,14 @@ export default function Triage() {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      const data = await safeJson<{ client?: { id: number }; detail?: string }>(res);
-
-      if (!res.ok) {
-        throw new Error(data.detail || `Server error ${res.status}`);
-      }
+      await parseApiResponse<{ client?: { id: number } }>(res, "Unable to add this client.");
 
       setShowAdd(false);
       resetForm();
       await refresh();
     } catch (e: any) {
-      console.log(e?.message || e);
-      Alert.alert("Add Client Error", e?.message ? String(e.message) : "Unknown error");
+      if (__DEV__) console.log(e?.message || e);
+      Alert.alert("Unable to Add Client", getErrorMessage(e, "Please try again."));
     } finally {
       setLoading(false);
     }
@@ -222,11 +218,14 @@ export default function Triage() {
                     text: "Logout",
                     style: "destructive",
                     onPress: async () => {
-                      if (__DEV__) {
-                        console.log("[triage/index.tsx] Logging out...");
+                      try {
+                        if (__DEV__) {
+                          console.log("[triage/index.tsx] Logging out...");
+                        }
+                        await logout();
+                      } catch (error) {
+                        Alert.alert("Logout Failed", getErrorMessage(error, "Please try again."));
                       }
-                      await logout();
-                      // Auth guard in _layout.tsx will handle redirect to /login
                     },
                   },
                 ]

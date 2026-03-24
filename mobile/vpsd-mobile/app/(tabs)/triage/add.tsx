@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { View, Text, TextInput, Button, StyleSheet, Alert } from "react-native";
 import { useRouter } from "expo-router";
-import { authenticatedFetch, safeJson } from "../../../src/api/client";
+import { authenticatedFetch, getErrorMessage, parseApiResponse } from "../../../src/api/client";
 
 export default function AddClient() {
   const router = useRouter();
@@ -21,14 +21,13 @@ export default function AddClient() {
         body: JSON.stringify({ display_name: name, neighborhood, notes }),
       });
 
-      const data = await safeJson<{ client?: { id: number }; detail?: string }>(res);
-      if (!res.ok) throw new Error(data.detail || `Server error ${res.status}`);
+      const data = await parseApiResponse<{ client?: { id: number } }>(res, "Unable to save this client.");
       const id = data?.client?.id;
       if (!id) throw new Error("Failed to create client");
 
       router.replace(`/(tabs)/triage/${id}`);
     } catch (e: any) {
-      Alert.alert("Error", e?.message || "Could not save client");
+      Alert.alert("Save Failed", getErrorMessage(e, "Could not save client."));
     } finally {
       setSaving(false);
     }

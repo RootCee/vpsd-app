@@ -1,5 +1,5 @@
-// Switch to local backend for testing, Render for production
-const LOCAL = "http://172.20.10.8:8000";  // ← replace with your LAN IP
-const RENDER = "https://vpsd-app-1.onrender.com";
+// Always use Render for production builds
+export const API_BASE = "https://vpsd-app-1.onrender.com";
 
-export const API_BASE = __DEV__ ? LOCAL : RENDER;
+// Opt-in dev tools so they stay hidden in normal development and all production builds.
+export const SHOW_DEV_TOOLS = __DEV__ && process.env.EXPO_PUBLIC_ENABLE_DEV_TOOLS === "1";

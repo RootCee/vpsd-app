@@ -1,17 +1,22 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, Button, StyleSheet } from "react-native";
-import { authenticatedFetch } from "../../src/api/client";
+import { View, Text, TextInput, Button, StyleSheet, Alert } from "react-native";
+import { authenticatedFetch, getErrorMessage, parseApiResponse } from "../../src/api/client";
 
 export default function Screening() {
   const [notes, setNotes] = useState("");
   const [result, setResult] = useState<any>(null);
 
   async function submit() {
-    const res = await authenticatedFetch("/screening/submit", {
-      method: "POST",
-      body: JSON.stringify({ notes }),
-    });
-    setResult(await res.json());
+    try {
+      const res = await authenticatedFetch("/screening/submit", {
+        method: "POST",
+        body: JSON.stringify({ notes }),
+      });
+      const data = await parseApiResponse<any>(res, "Unable to submit screening.");
+      setResult(data);
+    } catch (error) {
+      Alert.alert("Submission Failed", getErrorMessage(error, "Please try again."));
+    }
   }
 
   return (
