@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta
+import os
 import random
 from typing import Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func
 
 from db import SessionLocal, engine, Base
@@ -19,6 +21,75 @@ _ARCGIS_URL = (
 
 
 app = FastAPI()
+
+
+class UserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: Optional[str] = None
+    email: str
+    role: str
+    is_active: bool
+    created_at: datetime
+
+
+class CreateUserPayload(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=6, max_length=255)
+    role: str = Field(default="member")
+
+
+class CreateUserResponse(BaseModel):
+    user: UserResponse
+
+
+class UsersListResponse(BaseModel):
+    users: list[UserResponse]
+
+
+def _bootstrap_first_admin() -> dict[str, object]:
+    """
+    Ensure a first admin exists for fresh local/dev databases.
+    On Render/production, require explicit env vars instead of a hard-coded password.
+    """
+    db = SessionLocal()
+    try:
+        existing_admin = db.query(User).filter(User.role == "admin").first()
+        if existing_admin:
+            return {"created": False, "email": existing_admin.email}
+
+        email = (os.getenv("BOOTSTRAP_ADMIN_EMAIL") or "admin@hopebridge.org").strip().lower()
+        password = (os.getenv("BOOTSTRAP_ADMIN_PASSWORD") or "").strip()
+        name = (os.getenv("BOOTSTRAP_ADMIN_NAME") or "Admin").strip() or "Admin"
+        is_render = bool(os.getenv("RENDER") or os.path.exists("/opt/render"))
+
+        if not password:
+            if is_render:
+                return {
+                    "created": False,
+                    "email": email,
+                    "requires_env": True,
+                }
+            password = "hopebridge123"
+
+        user = User(
+            email=email,
+            hashed_password=hash_password(password),
+            name=name,
+            role="admin",
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+
+        result: dict[str, object] = {"created": True, "email": email}
+        if not is_render and not os.getenv("BOOTSTRAP_ADMIN_PASSWORD"):
+            result["temporary_password"] = password
+        return result
+    finally:
+        db.close()
 
 # ---------------------------
 # STARTUP: CREATE TABLES
@@ -48,7 +119,8 @@ app.add_middleware(
 def admin_init():
     # Manual “fix it now” endpoint
     Base.metadata.create_all(bind=engine)
-    return {"status": "initialized"}
+    bootstrap = _bootstrap_first_admin()
+    return {"status": "initialized", "admin": bootstrap}
 
 
 # ---------------------------
@@ -62,30 +134,33 @@ def health():
 # ---------------------------
 # AUTHENTICATION
 # ---------------------------
-@app.post("/auth/create-user")
-def create_user(payload: dict, current_user: User = Depends(get_current_user)):
+@app.post("/auth/create-user", response_model=CreateUserResponse)
+def create_user(payload: CreateUserPayload, current_user: User = Depends(get_current_user)):
     if current_user.role != "admin":
         raise HTTPException(403, "Admin access required")
 
-    email = (payload.get("email") or "").strip().lower()
-    password = (payload.get("password") or "").strip()
-    name = (payload.get("name") or "").strip() or None
-    role = (payload.get("role") or "member").strip()
+    email = payload.email.strip().lower()
+    password = payload.password.strip()
+    name = payload.name.strip() or None
+    role = payload.role.strip().lower()
 
-    if role not in ("admin", "member"):
-        raise HTTPException(400, "role must be 'admin' or 'member'")
+    if not name:
+        raise HTTPException(400, "Name is required.")
 
     if not email or "@" not in email:
-        raise HTTPException(400, "Valid email is required")
+        raise HTTPException(400, "Valid email is required.")
 
-    if not password or len(password) < 6:
-        raise HTTPException(400, "Password must be at least 6 characters")
+    if not password:
+        raise HTTPException(400, "Password is required.")
+
+    if role not in ("admin", "member"):
+        raise HTTPException(400, "Role must be 'admin' or 'member'.")
 
     db = SessionLocal()
     try:
         existing = db.query(User).filter(User.email == email).first()
         if existing:
-            raise HTTPException(400, "Email already registered")
+            raise HTTPException(400, "That email is already registered.")
 
         hashed_pwd = hash_password(password)
         user = User(email=email, hashed_password=hashed_pwd, name=name, role=role, is_active=True)
@@ -93,21 +168,28 @@ def create_user(payload: dict, current_user: User = Depends(get_current_user)):
         db.commit()
         db.refresh(user)
 
-        return {
-            "user": {
-                "id": user.id,
-                "name": user.name,
-                "email": user.email,
-                "role": user.role,
-                "is_active": user.is_active,
-            }
-        }
+        return {"user": UserResponse.model_validate(user)}
 
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"create_user failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Unable to create user: {e}")
+    finally:
+        db.close()
+
+
+@app.get("/auth/users", response_model=UsersListResponse)
+def list_users(current_user: User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin access required")
+
+    db = SessionLocal()
+    try:
+        users = db.query(User).order_by(User.created_at.desc(), User.id.desc()).all()
+        return {"users": [UserResponse.model_validate(user) for user in users]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unable to load users: {e}")
     finally:
         db.close()
 

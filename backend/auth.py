@@ -52,10 +52,7 @@ def decode_token(token: str) -> dict:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
-    except JWTError as e:
-        print(f"[auth] decode_token FAILED: {e}")
-        print(f"[auth] token preview: {token[:30]}...")
-        print(f"[auth] SECRET_KEY preview: {SECRET_KEY[:10]}...")
+    except JWTError:
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
 
 
@@ -79,7 +76,10 @@ def get_current_user(
     raw_id = payload.get("sub")
     if raw_id is None:
         raise HTTPException(status_code=401, detail="Invalid authentication credentials")
-    user_id = int(raw_id)
+    try:
+        user_id = int(raw_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid authentication credentials")
 
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:

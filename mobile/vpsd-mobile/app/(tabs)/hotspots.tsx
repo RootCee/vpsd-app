@@ -9,8 +9,7 @@ import {
   Alert,
 } from "react-native";
 import MapView, { Marker } from "react-native-maps";
-import { authenticatedFetch, getErrorMessage, parseApiResponse } from "../../src/api/client";
-import { SHOW_DEV_TOOLS } from "../../src/config";
+import { authenticatedFetch } from "../../src/api/client";
 
 type HotspotCell = {
   id: number;
@@ -84,6 +83,15 @@ function crimeMarkerSize(c: CrimeColor): number {
 }
 
 
+async function safeJson<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`Non-JSON response (${res.status}): ${text}`);
+  }
+}
+
 // Risk tier helpers
 type RiskTier = "low" | "medium" | "high";
 
@@ -116,6 +124,7 @@ function getMarkerColor(tier: RiskTier): { bg: string; border: string } {
 }
 
 export default function Hotspots() {
+  const showDemoControls = __DEV__;
   const [cells, setCells] = useState<HotspotCell[]>([]);
   const [events, setEvents] = useState<Incident[]>([]);
   const [forecast, setForecast] = useState<ForecastCell[]>([]);
@@ -130,25 +139,28 @@ export default function Hotspots() {
     try {
       if (layer === "hotspots" && cells.length === 0) {
         const res = await authenticatedFetch("/hotspots");
-        const data = await parseApiResponse<HotspotsResponse>(res, "Unable to load hotspots.");
+        if (!res.ok) throw new Error(`Hotspots ${res.status}: ${await res.text()}`);
+        const data = await safeJson<HotspotsResponse>(res);
         if (__DEV__) console.log("[hotspots] fetched", data.cells?.length, "cells");
         setCells(Array.isArray(data.cells) ? data.cells : []);
       } else if (layer === "incidents" && events.length === 0) {
         const res = await authenticatedFetch("/events?days=7");
-        const data = await parseApiResponse<{ items: Incident[] }>(res, "Unable to load incidents.");
+        if (!res.ok) throw new Error(`Events ${res.status}: ${await res.text()}`);
+        const data = await safeJson<{ items: Incident[] }>(res);
         const items = Array.isArray(data.items) ? data.items : [];
         if (__DEV__) console.log("[hotspots] fetched", items.length, "incidents");
         setEvents(items);
         if (items.length > 0) setLastUpdated(items[0].occurred_at);
       } else if (layer === "forecast" && forecast.length === 0) {
         const res = await authenticatedFetch("/hotspots/forecast?source=sdpd_nibrs");
-        const data = await parseApiResponse<{ cells: ForecastCell[] }>(res, "Unable to load forecast data.");
+        if (!res.ok) throw new Error(`Forecast ${res.status}: ${await res.text()}`);
+        const data = await safeJson<{ cells: ForecastCell[] }>(res);
         if (__DEV__) console.log("[hotspots] fetched", data.cells?.length, "forecast cells");
         setForecast(Array.isArray(data.cells) ? data.cells : []);
       }
     } catch (e: any) {
-      if (__DEV__) console.log(e?.message || e);
-      Alert.alert("Unable to Load Data", getErrorMessage(e, "Please try again."));
+      console.log(e?.message || e);
+      Alert.alert("Load Error", e?.message ? String(e.message) : "Unknown error");
     } finally {
       setLoading(false);
     }
@@ -163,51 +175,51 @@ export default function Hotspots() {
         authenticatedFetch("/events?days=7"),
         authenticatedFetch("/hotspots/forecast?source=sdpd_nibrs"),
       ]);
-      const hotData = await parseApiResponse<HotspotsResponse>(hotRes, "Unable to refresh hotspots.");
+      const hotData = await safeJson<HotspotsResponse>(hotRes);
       setCells(Array.isArray(hotData.cells) ? hotData.cells : []);
 
-      const evtData = await parseApiResponse<{ items: Incident[] }>(evtRes, "Unable to refresh incidents.");
+      const evtData = await safeJson<{ items: Incident[] }>(evtRes);
       const items = Array.isArray(evtData.items) ? evtData.items : [];
       setEvents(items);
 
-      const fcData = await parseApiResponse<{ cells: ForecastCell[] }>(fcRes, "Unable to refresh forecast data.");
+      const fcData = await safeJson<{ cells: ForecastCell[] }>(fcRes);
       setForecast(Array.isArray(fcData.cells) ? fcData.cells : []);
 
       if (items.length > 0) setLastUpdated(items[0].occurred_at);
     } catch (e: any) {
-      if (__DEV__) console.log(e?.message || e);
-      Alert.alert("Refresh Failed", getErrorMessage(e, "Please try again."));
+      console.log(e?.message || e);
+      Alert.alert("Hotspots Error", e?.message ? String(e.message) : "Unknown error");
     } finally {
       setLoading(false);
     }
   };
 
-  // Only define seedDemo in development
-  let seedDemo: (() => Promise<void>) | undefined = undefined;
-  if (SHOW_DEV_TOOLS) {
-    seedDemo = async () => {
-      setLoading(true);
-      try {
-        const seedRes = await authenticatedFetch("/hotspots/seed?source=sdpd_demo&n=120", {
-          method: "POST",
-        });
-        await parseApiResponse(seedRes, "Unable to seed demo hotspot data.");
+  const seedDemo = async () => {
+    if (!showDemoControls) {
+      return;
+    }
 
-        const runRes = await authenticatedFetch("/hotspots/run?source=sdpd_demo", {
-          method: "POST",
-        });
-        await parseApiResponse(runRes, "Unable to run demo hotspot generation.");
+    setLoading(true);
+    try {
+      const seedRes = await authenticatedFetch("/hotspots/seed?source=sdpd_demo&n=120", {
+        method: "POST",
+      });
+      await safeJson(seedRes);
 
-        await refresh();
-        setViewMode("map");
-      } catch (e: any) {
-        if (__DEV__) console.log(e?.message || e);
-        Alert.alert("Demo Data Failed", getErrorMessage(e, "Please try again."));
-      } finally {
-        setLoading(false);
-      }
-    };
-  }
+      const runRes = await authenticatedFetch("/hotspots/run?source=sdpd_demo", {
+        method: "POST",
+      });
+      await safeJson(runRes);
+
+      await refresh();
+      setViewMode("map");
+    } catch (e: any) {
+      console.log(e?.message || e);
+      Alert.alert("Seed Error", e?.message ? String(e.message) : "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const pullEvents = async () => {
     setLoading(true);
@@ -216,7 +228,11 @@ export default function Hotspots() {
         method: "POST",
       });
       if (__DEV__) console.log("[hotspots] pull response status:", res.status);
-      const data = await parseApiResponse<{ inserted: number; source: string }>(res, "Unable to pull real events.");
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Pull failed (${res.status}): ${errText}`);
+      }
+      const data = await safeJson<{ inserted: number; source: string }>(res);
       if (__DEV__) console.log("[hotspots] pull result:", data);
       const inserted = data.inserted ?? 0;
 
@@ -224,7 +240,11 @@ export default function Hotspots() {
         `/hotspots/run?source=${data.source || "sdpd_nibrs"}`,
         { method: "POST" }
       );
-      const hotData = await parseApiResponse<{ cells: number }>(hotRes, "Unable to refresh hotspot calculations.");
+      if (!hotRes.ok) {
+        const errText = await hotRes.text();
+        throw new Error(`Hotspot run failed (${hotRes.status}): ${errText}`);
+      }
+      const hotData = await safeJson<{ cells: number }>(hotRes);
       if (__DEV__) console.log("[hotspots] run result:", hotData);
 
       await refresh();
@@ -233,8 +253,8 @@ export default function Hotspots() {
         `${inserted} incidents from ${data.source} and computed ${hotData.cells ?? 0} hotspot cells`
       );
     } catch (e: any) {
-      if (__DEV__) console.log("[hotspots] pullEvents error:", e?.message || e);
-      Alert.alert("Update Failed", getErrorMessage(e, "Please try again."));
+      console.log("[hotspots] pullEvents error:", e?.message || e);
+      Alert.alert("Pull Error", e?.message ? String(e.message) : "Unknown error");
     } finally {
       setLoading(false);
     }
@@ -306,8 +326,7 @@ export default function Hotspots() {
         )}
 
         <View style={styles.buttonRow}>
-          {/* Hide Demo Only button in production */}
-          {SHOW_DEV_TOOLS && seedDemo && (
+          {showDemoControls && (
             <TouchableOpacity
               onPress={seedDemo}
               disabled={loading}
@@ -528,7 +547,9 @@ export default function Hotspots() {
             )}
             ListEmptyComponent={
               <Text style={{ color: "#aaa", marginTop: 20 }}>
-                No hotspot cells yet. Pull real events or refresh to try again.
+                {showDemoControls
+                  ? "No hotspot cells yet. Tap \"Demo Only\" or pull real events."
+                  : "No hotspot cells yet. Pull real events to populate this view."}
               </Text>
             }
           />

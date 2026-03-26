@@ -10,12 +10,15 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.hopebridge.app",
+      "bundleIdentifier": "com.rootcee.hopebridge",
+      "buildNumber": "1",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
+      "package": "com.rootcee.hopebridge",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -23,8 +26,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false,
-      "package": "com.hopebridge.app"
+      "predictiveBackGestureEnabled": false
     },
     "web": {
       "output": "static",
@@ -54,6 +56,11 @@
     },
     "extra": {
       "router": {},
+      "appStore": {
+        "privacyPolicyUrl": "https://example.com/privacy-policy",
+        "supportUrl": "https://example.com/support",
+        "supportEmail": "support@example.com"
+      },
       "eas": {
         "projectId": "1adbe53a-21ec-43df-8426-2c0bb96c48ea"
       }

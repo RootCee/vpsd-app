@@ -10,6 +10,8 @@ export class ApiError extends Error {
   }
 }
 
+const DEFAULT_TIMEOUT_MS = 10000;
+
 function parseJsonText<T>(text: string): T {
   return JSON.parse(text) as T;
 }
@@ -26,7 +28,21 @@ function normalizeServerMessage(message?: string | null) {
 }
 
 function buildApiErrorMessage(status: number, serverMessage?: string | null, fallback = "Request failed") {
-  if (status === 401) return "Your session expired. Please sign in again.";
+  if (status === 401) {
+    const normalized = normalizeServerMessage(serverMessage);
+    if (normalized) {
+      const lower = normalized.toLowerCase();
+      if (
+        lower.includes("invalid email or password") ||
+        lower.includes("invalid authentication credentials") ||
+        lower.includes("not authenticated") ||
+        lower.includes("could not validate credentials")
+      ) {
+        return normalized;
+      }
+    }
+    return "Your session expired. Please sign in again.";
+  }
   if (status === 403) return "You do not have permission to perform this action.";
   if (status === 404) return "The requested data is unavailable right now.";
   if (status >= 500) return "The service is temporarily unavailable. Please try again.";
@@ -39,18 +55,50 @@ export function getErrorMessage(error: unknown, fallback = "Something went wrong
   }
 
   if (error instanceof Error) {
+    if (error.name === "AbortError") {
+      return `Request timed out while reaching ${API_BASE}. If you're testing on a phone, make sure the backend is running and EXPO_PUBLIC_API_BASE points to your computer's LAN IP.`;
+    }
+
     if (
       error.message.includes("Network request failed") ||
       error.message.includes("Failed to fetch") ||
       error.message.includes("NetworkError")
     ) {
-      return "Unable to connect right now. Please check your internet connection and try again.";
+      return `Unable to reach ${API_BASE}. If you're testing on a phone, make sure the backend is running with --host 0.0.0.0 and EXPO_PUBLIC_API_BASE is set to your computer's LAN IP.`;
     }
 
     return error.message || fallback;
   }
 
   return fallback;
+}
+
+async function requestWithTimeout(url: string, options: RequestInit = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: options.signal ?? controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+export async function apiFetch(
+  endpoint: string,
+  options: RequestInit = {},
+  timeoutMs = DEFAULT_TIMEOUT_MS
+): Promise<Response> {
+  const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
+
+  try {
+    return await requestWithTimeout(url, options, timeoutMs);
+  } catch (error) {
+    throw new ApiError(getErrorMessage(error), undefined);
+  }
 }
 
 /**
@@ -75,10 +123,8 @@ export async function authenticatedFetch(
     headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
-
   try {
-    return await fetch(url, {
+    return await apiFetch(endpoint, {
       ...options,
       headers,
     });

@@ -1,5 +1,14 @@
-// Always use Render for production builds
-export const API_BASE = "https://vpsd-app-1.onrender.com";
+const RENDER = "https://vpsd-app-1.onrender.com";
+const LOCAL_FALLBACK = "http://127.0.0.1:8000";
 
-// Opt-in dev tools so they stay hidden in normal development and all production builds.
-export const SHOW_DEV_TOOLS = __DEV__ && process.env.EXPO_PUBLIC_ENABLE_DEV_TOOLS === "1";
+function normalizeBaseUrl(url?: string | null) {
+  const trimmed = url?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/\/+$/, "");
+}
+
+const configuredBase = normalizeBaseUrl(process.env.EXPO_PUBLIC_API_BASE);
+
+// In development, default to localhost for simulator use and allow physical devices
+// to override with EXPO_PUBLIC_API_BASE=http://<your-lan-ip>:8000.
+export const API_BASE = __DEV__ ? (configuredBase || LOCAL_FALLBACK) : RENDER;

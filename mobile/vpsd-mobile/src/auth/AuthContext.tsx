@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { getToken, setToken as saveToken, clearToken } from "./token";
 import { API_BASE } from "../config";
-import { ApiError, getErrorMessage, parseApiResponse } from "../api/client";
+import { apiFetch, ApiError, getErrorMessage, parseApiResponse } from "../api/client";
 
 type User = {
   id: number;
@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (savedToken) {
         // Validate token against server before trusting it
         try {
-          const res = await fetch(`${API_BASE}/auth/me`, {
+          const res = await apiFetch("/auth/me", {
             headers: { Authorization: `Bearer ${savedToken}` },
           });
           if (res.ok) {
@@ -89,7 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
+      const res = await apiFetch("/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),

@@ -10,6 +10,7 @@ h11==0.16.0
 idna==3.11
 numpy==2.2.6
 pandas==2.3.3
+psycopg2-binary==2.9.10
 pydantic==2.12.5
 pydantic_core==2.41.5
 python-dateutil==2.9.0.post0
