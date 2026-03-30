@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Hope Bridge",
-    "slug": "hope-bridge",
+    "slug": "vpsd-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -64,6 +64,13 @@
       "eas": {
         "projectId": "1adbe53a-21ec-43df-8426-2c0bb96c48ea"
       }
+    },
+    "owner": "rootcee",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/1adbe53a-21ec-43df-8426-2c0bb96c48ea"
     }
   }
 }
