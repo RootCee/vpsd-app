@@ -1,11 +1,10 @@
 from datetime import datetime, timedelta
 import os
 import random
-import secrets
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func
@@ -60,47 +59,88 @@ class UsersListResponse(BaseModel):
     users: list[UserResponse]
 
 
-def _bootstrap_first_admin() -> dict[str, object]:
-    """
-    Ensure a first admin exists for fresh local/dev databases.
-    On Render/production, require explicit env vars instead of a hard-coded password.
-    """
+def _upsert_bootstrap_user(
+    *,
+    email_env: str,
+    password_env: str,
+    name_env: str,
+    role: str,
+    label: str,
+) -> dict[str, object]:
+    email = (os.getenv(email_env) or "").strip().lower()
+    password = (os.getenv(password_env) or "").strip()
+    name = (os.getenv(name_env) or "").strip()
+
+    if not email and not password and not name:
+        print(f"[startup] Skipped {label} user sync: {email_env}/{password_env} not set")
+        return {"label": label, "synced": False, "reason": "env_not_set"}
+
+    if not email or not password:
+        print(f"[startup] Skipped {label} user sync: missing email or password env")
+        return {"label": label, "synced": False, "reason": "missing_email_or_password"}
+
+    if "@" not in email:
+        print(f"[startup] Skipped {label} user sync: invalid email format")
+        return {"label": label, "synced": False, "reason": "invalid_email"}
+
     db = SessionLocal()
     try:
-        existing_admin = db.query(User).filter(User.role == "admin").first()
-        if existing_admin:
-            return {"created": False, "email": existing_admin.email}
+        user = db.query(User).filter(User.email == email).first()
+        created = user is None
 
-        email = (os.getenv("BOOTSTRAP_ADMIN_EMAIL") or "admin@hopebridge.org").strip().lower()
-        password = (os.getenv("BOOTSTRAP_ADMIN_PASSWORD") or "").strip()
-        name = (os.getenv("BOOTSTRAP_ADMIN_NAME") or "Admin").strip() or "Admin"
-        is_render = bool(os.getenv("RENDER") or os.path.exists("/opt/render"))
+        if user is None:
+            user = User(
+                email=email,
+                hashed_password=hash_password(password),
+                name=name or None,
+                role=role,
+                is_active=True,
+            )
+            db.add(user)
+        else:
+            user.hashed_password = hash_password(password)
+            user.role = role
+            user.is_active = True
+            if name:
+                user.name = name
 
-        if not password:
-            if is_render:
-                return {
-                    "created": False,
-                    "email": email,
-                    "requires_env": True,
-                }
-            password = "hopebridge123"
-
-        user = User(
-            email=email,
-            hashed_password=hash_password(password),
-            name=name,
-            role="admin",
-            is_active=True,
-        )
-        db.add(user)
         db.commit()
-
-        result: dict[str, object] = {"created": True, "email": email}
-        if not is_render and not os.getenv("BOOTSTRAP_ADMIN_PASSWORD"):
-            result["temporary_password"] = password
+        print(f"[startup] Synced {label} user: email={email} role={role} created={created}")
+        result: dict[str, object] = {
+            "label": label,
+            "synced": True,
+            "created": created,
+            "email": email,
+            "role": role,
+        }
         return result
+    except Exception as e:
+        db.rollback()
+        print(f"[startup] Failed {label} user sync: email={email or '<missing>'} error={e}")
+        raise
     finally:
         db.close()
+
+
+def _sync_bootstrap_users() -> list[dict[str, object]]:
+    results = [
+        _upsert_bootstrap_user(
+            email_env="BOOTSTRAP_ADMIN_EMAIL",
+            password_env="BOOTSTRAP_ADMIN_PASSWORD",
+            name_env="BOOTSTRAP_ADMIN_NAME",
+            role="admin",
+            label="admin",
+        ),
+        _upsert_bootstrap_user(
+            email_env="BOOTSTRAP_REVIEW_EMAIL",
+            password_env="BOOTSTRAP_REVIEW_PASSWORD",
+            name_env="BOOTSTRAP_REVIEW_NAME",
+            role="member",
+            label="review",
+        ),
+    ]
+    print(f"[startup] Bootstrap user sync complete: {results}")
+    return results
 
 # ---------------------------
 # STARTUP: CREATE TABLES
@@ -109,6 +149,7 @@ def _bootstrap_first_admin() -> dict[str, object]:
 def on_startup():
     # Creates tables automatically on boot (critical for Render)
     Base.metadata.create_all(bind=engine)
+    _sync_bootstrap_users()
 
 
 # ---------------------------
@@ -130,8 +171,8 @@ app.add_middleware(
 def admin_init():
     # Manual “fix it now” endpoint
     Base.metadata.create_all(bind=engine)
-    bootstrap = _bootstrap_first_admin()
-    return {"status": "initialized", "admin": bootstrap}
+    bootstrap = _sync_bootstrap_users()
+    return {"status": "initialized", "users": bootstrap}
 
 
 # ---------------------------
@@ -221,49 +262,6 @@ def reset_password(payload: ResetPasswordPayload, current_user: User = Depends(g
         raise HTTPException(status_code=500, detail=f"Unable to reset password: {e}")
     finally:
         db.close()
-
-
-@app.post("/admin/reset-password", response_model=ResetPasswordResponse)
-def admin_reset_password(
-    payload: ResetPasswordPayload,
-    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
-):
-    # TEMPORARY production recovery route. Remove after Hope Bridge admin access is restored.
-    expected_key = (os.getenv("ADMIN_RESET_KEY") or "").strip()
-
-    if not expected_key:
-        raise HTTPException(500, "Admin password recovery is not configured.")
-
-    if not x_admin_key or not secrets.compare_digest(x_admin_key, expected_key):
-        raise HTTPException(403, "Invalid admin reset key.")
-
-    email = payload.email.strip().lower()
-    new_password = payload.new_password.strip()
-
-    if not email or "@" not in email:
-        raise HTTPException(400, "Valid email is required.")
-
-    if not new_password:
-        raise HTTPException(400, "New password is required.")
-
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.email == email).first()
-        if not user:
-            raise HTTPException(404, "User not found.")
-
-        user.hashed_password = hash_password(new_password)
-        db.commit()
-
-        return {"success": True, "message": "Password reset successful."}
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Unable to reset password: {e}")
-    finally:
-        db.close()
-
 
 @app.get("/auth/users", response_model=UsersListResponse)
 def list_users(current_user: User = Depends(get_current_user)):
