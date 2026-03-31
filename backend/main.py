@@ -1,10 +1,11 @@
 from datetime import datetime, timedelta
 import os
 import random
+import secrets
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func
@@ -43,6 +44,16 @@ class CreateUserPayload(BaseModel):
 
 class CreateUserResponse(BaseModel):
     user: UserResponse
+
+
+class ResetPasswordPayload(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    new_password: str = Field(min_length=6, max_length=255)
+
+
+class ResetPasswordResponse(BaseModel):
+    success: bool
+    message: str
 
 
 class UsersListResponse(BaseModel):
@@ -175,6 +186,81 @@ def create_user(payload: CreateUserPayload, current_user: User = Depends(get_cur
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Unable to create user: {e}")
+    finally:
+        db.close()
+
+
+@app.post("/auth/reset-password", response_model=ResetPasswordResponse)
+def reset_password(payload: ResetPasswordPayload, current_user: User = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin access required")
+
+    email = payload.email.strip().lower()
+    new_password = payload.new_password.strip()
+
+    if not email or "@" not in email:
+        raise HTTPException(400, "Valid email is required.")
+
+    if not new_password:
+        raise HTTPException(400, "New password is required.")
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            raise HTTPException(404, "User not found.")
+
+        user.hashed_password = hash_password(new_password)
+        db.commit()
+
+        return {"success": True, "message": "Password reset successful."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Unable to reset password: {e}")
+    finally:
+        db.close()
+
+
+@app.post("/admin/reset-password", response_model=ResetPasswordResponse)
+def admin_reset_password(
+    payload: ResetPasswordPayload,
+    x_admin_key: Optional[str] = Header(default=None, alias="X-Admin-Key"),
+):
+    # TEMPORARY production recovery route. Remove after Hope Bridge admin access is restored.
+    expected_key = (os.getenv("ADMIN_RESET_KEY") or "").strip()
+
+    if not expected_key:
+        raise HTTPException(500, "Admin password recovery is not configured.")
+
+    if not x_admin_key or not secrets.compare_digest(x_admin_key, expected_key):
+        raise HTTPException(403, "Invalid admin reset key.")
+
+    email = payload.email.strip().lower()
+    new_password = payload.new_password.strip()
+
+    if not email or "@" not in email:
+        raise HTTPException(400, "Valid email is required.")
+
+    if not new_password:
+        raise HTTPException(400, "New password is required.")
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            raise HTTPException(404, "User not found.")
+
+        user.hashed_password = hash_password(new_password)
+        db.commit()
+
+        return {"success": True, "message": "Password reset successful."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Unable to reset password: {e}")
     finally:
         db.close()
 
