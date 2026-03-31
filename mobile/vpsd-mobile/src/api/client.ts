@@ -10,7 +10,7 @@ export class ApiError extends Error {
   }
 }
 
-const DEFAULT_TIMEOUT_MS = 10000;
+const DEFAULT_TIMEOUT_MS = __DEV__ ? 10000 : 30000;
 
 function parseJsonText<T>(text: string): T {
   return JSON.parse(text) as T;
