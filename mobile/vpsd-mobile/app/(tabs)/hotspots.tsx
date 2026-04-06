@@ -356,6 +356,15 @@ export default function Hotspots() {
       ]
     : [];
 
+  const incidentHighlights = selectedIncident
+    ? [
+        { key: "when", label: "When", value: formatIncidentValue(selectedIncident.occurred_at, { dateTime: true }) },
+        { key: "where", label: "Where", value: formatIncidentValue(selectedIncident.block_address) },
+        { key: "code", label: "Code", value: formatIncidentValue(formatCodeDetail(selectedIncident)) },
+        { key: "source", label: "Source", value: formatIncidentValue(selectedIncident.source) },
+      ]
+    : [];
+
   return (
     <View style={{ flex: 1, backgroundColor: "black" }}>
       <View style={styles.container}>
@@ -665,6 +674,15 @@ export default function Hotspots() {
               contentContainerStyle={styles.sheetBodyContent}
               showsVerticalScrollIndicator
             >
+              <View style={styles.highlightGrid}>
+                {incidentHighlights.map((item) => (
+                  <View key={item.key} style={styles.highlightCard}>
+                    <Text style={styles.highlightLabel}>{item.label}</Text>
+                    <Text style={styles.highlightValue}>{item.value}</Text>
+                  </View>
+                ))}
+              </View>
+
               <Text style={styles.fieldSectionTitle}>Available Fields</Text>
               {incidentDetailRows.map((row) => (
                 <View key={row.key} style={styles.detailRow}>
@@ -788,6 +806,32 @@ const styles = StyleSheet.create({
   sheetBodyContent: {
     paddingBottom: 8,
     gap: 10,
+  },
+  highlightGrid: {
+    gap: 10,
+    marginBottom: 4,
+  },
+  highlightCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#2a2a2a",
+    backgroundColor: "#171717",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  highlightLabel: {
+    color: "#9fb0c8",
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 6,
+  },
+  highlightValue: {
+    color: "#ffffff",
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: "600",
   },
   fieldSectionTitle: {
     color: "#d6dae1",
