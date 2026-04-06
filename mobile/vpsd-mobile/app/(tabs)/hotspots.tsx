@@ -190,6 +190,7 @@ export default function Hotspots() {
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
   const [mapLayer, setMapLayer] = useState<"hotspots" | "incidents" | "forecast">("hotspots");
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [previewIncident, setPreviewIncident] = useState<Incident | null>(null);
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
 
   // Lazy-fetch only the data needed for a given layer
@@ -334,6 +335,10 @@ export default function Hotspots() {
     fetchLayer(mapLayer);
   }, [mapLayer]);
 
+  useEffect(() => {
+    setPreviewIncident(null);
+  }, [mapLayer, viewMode]);
+
   // Pick a “center” for the map. If we have data, use the first cell.
   const centerLat =
     typeof cells?.[0]?.grid_lat === "number" ? cells[0].grid_lat! : 32.7157;
@@ -349,6 +354,10 @@ export default function Hotspots() {
         { key: "code_section", label: "Code Section", value: formatIncidentValue(selectedIncident.code_section) },
         { key: "offense_code", label: "Offense Code", value: formatIncidentValue(selectedIncident.offense_code) },
         { key: "source", label: "Source", value: formatIncidentValue(selectedIncident.source) },
+        { key: "lat", label: "Latitude", value: formatIncidentValue(selectedIncident.lat, { coordinate: true }) },
+        { key: "lon", label: "Longitude", value: formatIncidentValue(selectedIncident.lon, { coordinate: true }) },
+        { key: "external_id", label: "External ID", value: formatIncidentValue(selectedIncident.external_id) },
+        { key: "id", label: "Record ID", value: formatIncidentValue(selectedIncident.id) },
       ]
     : [];
 
@@ -497,9 +506,7 @@ export default function Hotspots() {
                     <Marker
                       key={`evt-${evt.id}`}
                       coordinate={{ latitude: evt.lat, longitude: evt.lon }}
-                      title={title}
-                      description={lines}
-                      onCalloutPress={() => setSelectedIncident(evt)}
+                      onPress={() => setPreviewIncident(evt)}
                     >
                       <View
                         style={{
@@ -597,6 +604,29 @@ export default function Hotspots() {
                 </>
               )}
             </View>
+
+            {mapLayer === "incidents" && previewIncident && !selectedIncident && (
+              <Pressable
+                style={styles.previewCard}
+                onPress={() => {
+                  setSelectedIncident(previewIncident);
+                  setPreviewIncident(null);
+                }}
+              >
+                <Text style={styles.previewTitle}>
+                  {previewIncident.incident_type || "Incident"}
+                </Text>
+                <Text style={styles.previewMeta}>
+                  {previewIncident.offense_category || "Category unavailable"}
+                </Text>
+                <Text style={styles.previewMeta}>
+                  {formatIncidentValue(previewIncident.occurred_at, { dateTime: true })}
+                </Text>
+                <View style={styles.previewButton}>
+                  <Text style={styles.previewButtonText}>View Full Details</Text>
+                </View>
+              </Pressable>
+            )}
           </View>
         ) : (
           <FlatList
@@ -636,7 +666,13 @@ export default function Hotspots() {
         onRequestClose={() => setSelectedIncident(null)}
       >
         <View style={styles.modalOverlay}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setSelectedIncident(null)} />
+          <Pressable
+            style={styles.modalBackdrop}
+            onPress={() => {
+              setSelectedIncident(null);
+              setPreviewIncident(null);
+            }}
+          />
           <View style={styles.sheet}>
             <View style={styles.sheetHeader}>
               <View style={{ flex: 1 }}>
@@ -649,7 +685,10 @@ export default function Hotspots() {
                 </Text>
               </View>
               <TouchableOpacity
-                onPress={() => setSelectedIncident(null)}
+                onPress={() => {
+                  setSelectedIncident(null);
+                  setPreviewIncident(null);
+                }}
                 style={styles.sheetCloseBtn}
               >
                 <Text style={styles.sheetCloseText}>Close</Text>
@@ -661,6 +700,7 @@ export default function Hotspots() {
               contentContainerStyle={styles.sheetBodyContent}
               showsVerticalScrollIndicator
             >
+              <Text style={styles.fieldSectionTitle}>Incident Details</Text>
               {incidentDetailRows.map((row) => (
                 <View key={row.key} style={styles.detailRow}>
                   <Text style={styles.detailLabel}>{row.label}</Text>
@@ -723,6 +763,41 @@ const styles = StyleSheet.create({
     borderColor: "#2a2a2a",
     backgroundColor: "#111",
   },
+  previewCard: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 18,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#2a2a2a",
+    backgroundColor: "rgba(15, 15, 16, 0.96)",
+    padding: 14,
+  },
+  previewTitle: {
+    color: "#ffffff",
+    fontSize: 18,
+    fontWeight: "800",
+    marginBottom: 6,
+  },
+  previewMeta: {
+    color: "#d1d5db",
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  previewButton: {
+    marginTop: 10,
+    borderRadius: 10,
+    backgroundColor: "#ffffff",
+    paddingVertical: 9,
+    alignItems: "center",
+  },
+  previewButtonText: {
+    color: "#111827",
+    fontSize: 13,
+    fontWeight: "800",
+  },
   modalOverlay: {
     flex: 1,
     justifyContent: "center",
@@ -738,6 +813,7 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 420,
     maxHeight: "78%",
+    minHeight: 360,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: "#2a2a2a",
@@ -786,10 +862,19 @@ const styles = StyleSheet.create({
   },
   sheetBody: {
     flex: 1,
+    minHeight: 220,
   },
   sheetBodyContent: {
+    paddingTop: 4,
     paddingBottom: 8,
     gap: 10,
+  },
+  fieldSectionTitle: {
+    color: "#d6dae1",
+    fontSize: 13,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    marginBottom: 2,
   },
   detailRow: {
     borderRadius: 14,
