@@ -349,19 +349,6 @@ export default function Hotspots() {
         { key: "code_section", label: "Code Section", value: formatIncidentValue(selectedIncident.code_section) },
         { key: "offense_code", label: "Offense Code", value: formatIncidentValue(selectedIncident.offense_code) },
         { key: "source", label: "Source", value: formatIncidentValue(selectedIncident.source) },
-        { key: "lat", label: "Latitude", value: formatIncidentValue(selectedIncident.lat, { coordinate: true }) },
-        { key: "lon", label: "Longitude", value: formatIncidentValue(selectedIncident.lon, { coordinate: true }) },
-        { key: "external_id", label: "External ID", value: formatIncidentValue(selectedIncident.external_id) },
-        { key: "id", label: "Record ID", value: formatIncidentValue(selectedIncident.id) },
-      ]
-    : [];
-
-  const incidentHighlights = selectedIncident
-    ? [
-        { key: "when", label: "When", value: formatIncidentValue(selectedIncident.occurred_at, { dateTime: true }) },
-        { key: "where", label: "Where", value: formatIncidentValue(selectedIncident.block_address) },
-        { key: "code", label: "Code", value: formatIncidentValue(formatCodeDetail(selectedIncident)) },
-        { key: "source", label: "Source", value: formatIncidentValue(selectedIncident.source) },
       ]
     : [];
 
@@ -674,22 +661,19 @@ export default function Hotspots() {
               contentContainerStyle={styles.sheetBodyContent}
               showsVerticalScrollIndicator
             >
-              <View style={styles.highlightGrid}>
-                {incidentHighlights.map((item) => (
-                  <View key={item.key} style={styles.highlightCard}>
-                    <Text style={styles.highlightLabel}>{item.label}</Text>
-                    <Text style={styles.highlightValue}>{item.value}</Text>
-                  </View>
-                ))}
-              </View>
-
-              <Text style={styles.fieldSectionTitle}>Available Fields</Text>
               {incidentDetailRows.map((row) => (
                 <View key={row.key} style={styles.detailRow}>
                   <Text style={styles.detailLabel}>{row.label}</Text>
                   <Text style={styles.detailValue}>{row.value}</Text>
                 </View>
               ))}
+
+              {selectedIncident && formatCodeDetail(selectedIncident) ? (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Combined Code</Text>
+                  <Text style={styles.detailValue}>{formatCodeDetail(selectedIncident)}</Text>
+                </View>
+              ) : null}
             </ScrollView>
           </View>
         </View>
@@ -806,39 +790,6 @@ const styles = StyleSheet.create({
   sheetBodyContent: {
     paddingBottom: 8,
     gap: 10,
-  },
-  highlightGrid: {
-    gap: 10,
-    marginBottom: 4,
-  },
-  highlightCard: {
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: "#2a2a2a",
-    backgroundColor: "#171717",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  highlightLabel: {
-    color: "#9fb0c8",
-    fontSize: 12,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    marginBottom: 6,
-  },
-  highlightValue: {
-    color: "#ffffff",
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: "600",
-  },
-  fieldSectionTitle: {
-    color: "#d6dae1",
-    fontSize: 13,
-    fontWeight: "700",
-    letterSpacing: 0.4,
-    marginBottom: 2,
   },
   detailRow: {
     borderRadius: 14,
