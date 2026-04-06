@@ -7,6 +7,9 @@ import {
   FlatList,
   StyleSheet,
   Alert,
+  Modal,
+  Pressable,
+  ScrollView,
 } from "react-native";
 import MapView, { Marker } from "react-native-maps";
 import { authenticatedFetch } from "../../src/api/client";
@@ -152,6 +155,7 @@ export default function Hotspots() {
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
   const [mapLayer, setMapLayer] = useState<"hotspots" | "incidents" | "forecast">("hotspots");
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
 
   // Lazy-fetch only the data needed for a given layer
   const fetchLayer = async (layer: "hotspots" | "incidents" | "forecast") => {
@@ -296,6 +300,18 @@ export default function Hotspots() {
   const centerLon =
     typeof cells?.[0]?.grid_lon === "number" ? cells[0].grid_lon! : -117.1611;
 
+  const incidentDetailRows = selectedIncident
+    ? [
+        { label: "Incident Type", value: selectedIncident.incident_type || "Unknown" },
+        { label: "Category", value: selectedIncident.offense_category || "Not provided" },
+        { label: "Date/Time", value: formatIncidentDateTime(selectedIncident.occurred_at) },
+        { label: "Hundred-block", value: selectedIncident.block_address || "Not provided" },
+        { label: "Code Section", value: selectedIncident.code_section || "Not provided" },
+        { label: "Offense Code", value: selectedIncident.offense_code || "Not provided" },
+        { label: "Source", value: selectedIncident.source || "Not provided" },
+      ]
+    : [];
+
   return (
     <View style={{ flex: 1, backgroundColor: "black" }}>
       <View style={styles.container}>
@@ -431,11 +447,8 @@ export default function Hotspots() {
                   const sz = crimeMarkerSize(cat);
                   const title = evt.incident_type || "Incident";
                   const lines = [
-                    `Incident Type: ${evt.incident_type || "Unknown"}`,
-                    evt.offense_category ? `Category: ${evt.offense_category}` : null,
-                    `Date/Time: ${formatIncidentDateTime(evt.occurred_at)}`,
-                    evt.block_address ? `Hundred-block: ${evt.block_address}` : null,
-                    formatCodeDetail(evt) ? `Code: ${formatCodeDetail(evt)}` : null,
+                    evt.offense_category ? `Category: ${evt.offense_category}` : "Category unavailable",
+                    "Tap for details",
                   ]
                     .filter(Boolean)
                     .join("\n");
@@ -446,6 +459,7 @@ export default function Hotspots() {
                       coordinate={{ latitude: evt.lat, longitude: evt.lon }}
                       title={title}
                       description={lines}
+                      onPress={() => setSelectedIncident(evt)}
                     >
                       <View
                         style={{
@@ -574,6 +588,56 @@ export default function Hotspots() {
           />
         )}
       </View>
+
+      <Modal
+        visible={selectedIncident !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelectedIncident(null)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setSelectedIncident(null)}>
+          <Pressable style={styles.sheet} onPress={() => {}}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sheetEyebrow}>Incident Detail</Text>
+                <Text style={styles.sheetTitle}>
+                  {selectedIncident?.incident_type || "Incident"}
+                </Text>
+                <Text style={styles.sheetSubtitle}>
+                  {selectedIncident?.offense_category || "Public dataset record"}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setSelectedIncident(null)}
+                style={styles.sheetCloseBtn}
+              >
+                <Text style={styles.sheetCloseText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              style={styles.sheetBody}
+              contentContainerStyle={styles.sheetBodyContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {incidentDetailRows.map((row) => (
+                <View key={row.label} style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>{row.label}</Text>
+                  <Text style={styles.detailValue}>{row.value}</Text>
+                </View>
+              ))}
+
+              {selectedIncident && formatCodeDetail(selectedIncident) ? (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Combined Code</Text>
+                  <Text style={styles.detailValue}>{formatCodeDetail(selectedIncident)}</Text>
+                </View>
+              ) : null}
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -618,6 +682,95 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#2a2a2a",
     backgroundColor: "#111",
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0, 0, 0, 0.55)",
+  },
+  sheet: {
+    maxHeight: "72%",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    borderColor: "#2a2a2a",
+    backgroundColor: "#0f0f10",
+    paddingHorizontal: 18,
+    paddingTop: 10,
+    paddingBottom: 24,
+  },
+  sheetHandle: {
+    alignSelf: "center",
+    width: 42,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: "#3a3a3a",
+    marginBottom: 14,
+  },
+  sheetHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    marginBottom: 12,
+  },
+  sheetEyebrow: {
+    color: "#8f96a3",
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
+  },
+  sheetTitle: {
+    color: "#fff",
+    fontSize: 22,
+    fontWeight: "800",
+    marginTop: 4,
+  },
+  sheetSubtitle: {
+    color: "#b4bac5",
+    fontSize: 14,
+    marginTop: 4,
+  },
+  sheetCloseBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#2a2a2a",
+    backgroundColor: "#171717",
+  },
+  sheetCloseText: {
+    color: "#f3f4f6",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  sheetBody: {
+    flexGrow: 0,
+  },
+  sheetBodyContent: {
+    paddingBottom: 8,
+    gap: 10,
+  },
+  detailRow: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#232323",
+    backgroundColor: "#151515",
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  detailLabel: {
+    color: "#8f96a3",
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: 6,
+  },
+  detailValue: {
+    color: "#f8fafc",
+    fontSize: 15,
+    lineHeight: 22,
   },
 
   legend: {
