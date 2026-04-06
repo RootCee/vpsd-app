@@ -35,6 +35,9 @@ type Incident = {
   source: string;
   incident_type: string;
   offense_category: string | null;
+  block_address: string | null;
+  code_section: string | null;
+  offense_code: string | null;
   occurred_at: string;
   lat: number;
   lon: number;
@@ -80,6 +83,23 @@ function crimeMarkerSize(c: CrimeColor): number {
     case "drug": return 11;
     case "other": return 9;
   }
+}
+
+function formatIncidentDateTime(value: string): string {
+  return new Date(value).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatCodeDetail(evt: Incident): string | null {
+  if (evt.code_section && evt.offense_code) {
+    return `${evt.code_section} / ${evt.offense_code}`;
+  }
+  return evt.code_section || evt.offense_code || null;
 }
 
 
@@ -411,12 +431,11 @@ export default function Hotspots() {
                   const sz = crimeMarkerSize(cat);
                   const title = evt.incident_type || "Incident";
                   const lines = [
-                    evt.offense_category && evt.offense_category !== evt.incident_type
-                      ? evt.offense_category
-                      : null,
-                    new Date(evt.occurred_at).toLocaleString(undefined, {
-                      month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
-                    }),
+                    `Incident Type: ${evt.incident_type || "Unknown"}`,
+                    evt.offense_category ? `Category: ${evt.offense_category}` : null,
+                    `Date/Time: ${formatIncidentDateTime(evt.occurred_at)}`,
+                    evt.block_address ? `Hundred-block: ${evt.block_address}` : null,
+                    formatCodeDetail(evt) ? `Code: ${formatCodeDetail(evt)}` : null,
                   ]
                     .filter(Boolean)
                     .join("\n");

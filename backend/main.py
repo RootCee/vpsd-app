@@ -7,7 +7,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func
+from sqlalchemy import func, inspect, text
 
 from db import SessionLocal, engine, Base
 from models import Incident, HotspotCell, Client, ContactLog, User
@@ -21,6 +21,23 @@ _ARCGIS_URL = (
 
 
 app = FastAPI()
+
+
+def _ensure_incident_columns() -> None:
+    inspector = inspect(engine)
+    if "incidents" not in inspector.get_table_names():
+        return
+
+    existing = {col["name"] for col in inspector.get_columns("incidents")}
+    needed = {
+        "block_address": "VARCHAR(255)",
+        "code_section": "VARCHAR(255)",
+        "offense_code": "VARCHAR(64)",
+    }
+    with engine.begin() as conn:
+        for name, column_type in needed.items():
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE incidents ADD COLUMN {name} {column_type}"))
 
 
 class UserResponse(BaseModel):
@@ -149,6 +166,7 @@ def _sync_bootstrap_users() -> list[dict[str, object]]:
 def on_startup():
     # Creates tables automatically on boot (critical for Render)
     Base.metadata.create_all(bind=engine)
+    _ensure_incident_columns()
     _sync_bootstrap_users()
 
 
@@ -171,6 +189,7 @@ app.add_middleware(
 def admin_init():
     # Manual “fix it now” endpoint
     Base.metadata.create_all(bind=engine)
+    _ensure_incident_columns()
     bootstrap = _sync_bootstrap_users()
     return {"status": "initialized", "users": bootstrap}
 
@@ -905,12 +924,16 @@ def _seed_demo_events(db, days: int, n: int = 150) -> int:
 def pull_events(days: int = 7, current_user: User = Depends(get_current_user)):
     """Fetch SDPD NIBRS incidents from ArcGIS; fall back to demo data."""
     Base.metadata.create_all(bind=engine)
+    _ensure_incident_columns()
 
     since = datetime.utcnow() - timedelta(days=days)
 
     params: dict[str, str] = {
         "f": "json",
-        "outFields": "NIBRS_UNIQ,OCCURED_ON,IBR_OFFENSE_DESCRIPTION,PD_OFFENSE_CATEGORY,X,Y",
+        "outFields": (
+            "NIBRS_UNIQ,OCCURED_ON,IBR_OFFENSE_DESCRIPTION,PD_OFFENSE_CATEGORY,"
+            "BLOCK_ADDR,CODE_SECTION,IBR_OFFENSE,X,Y"
+        ),
         "returnGeometry": "true",
         "outSR": "4326",
         "where": f"OCCURED_ON >= TIMESTAMP '{since.strftime('%Y-%m-%d %H:%M:%S')}'",
@@ -971,6 +994,9 @@ def pull_events(days: int = 7, current_user: User = Depends(get_current_user)):
                     or attrs.get("IBR_OFFENSE_DESCRIPTION")
                     or "unknown"
                 )
+                block_address = attrs.get("BLOCK_ADDR")
+                code_section = attrs.get("CODE_SECTION")
+                offense_code = attrs.get("IBR_OFFENSE")
 
                 # --- upsert by external_id ---
                 existing = db.query(Incident).filter(
@@ -982,6 +1008,9 @@ def pull_events(days: int = 7, current_user: User = Depends(get_current_user)):
                     existing.occurred_at = occurred_at
                     existing.offense_category = offense_category
                     existing.incident_type = incident_type
+                    existing.block_address = str(block_address) if block_address else None
+                    existing.code_section = str(code_section) if code_section else None
+                    existing.offense_code = str(offense_code) if offense_code else None
                     skipped += 1
                 else:
                     db.add(Incident(
@@ -989,6 +1018,9 @@ def pull_events(days: int = 7, current_user: User = Depends(get_current_user)):
                         source="sdpd_nibrs",
                         incident_type=incident_type,
                         offense_category=offense_category,
+                        block_address=str(block_address) if block_address else None,
+                        code_section=str(code_section) if code_section else None,
+                        offense_code=str(offense_code) if offense_code else None,
                         occurred_at=occurred_at,
                         lat=float(lat),
                         lon=float(lon),
@@ -1021,6 +1053,7 @@ def pull_events(days: int = 7, current_user: User = Depends(get_current_user)):
 def get_events(days: int = 7, current_user: User = Depends(get_current_user)):
     """Return incidents from the last `days` days for the map."""
     Base.metadata.create_all(bind=engine)
+    _ensure_incident_columns()
     since = datetime.utcnow() - timedelta(days=days)
     db = SessionLocal()
     try:
@@ -1040,6 +1073,9 @@ def get_events(days: int = 7, current_user: User = Depends(get_current_user)):
                     "occurred_at": inc.occurred_at.isoformat(),
                     "incident_type": inc.incident_type,
                     "offense_category": inc.offense_category,
+                    "block_address": inc.block_address,
+                    "code_section": inc.code_section,
+                    "offense_code": inc.offense_code,
                     "source": inc.source,
                 }
                 for inc in incidents
