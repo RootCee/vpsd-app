@@ -459,7 +459,7 @@ export default function Hotspots() {
                       coordinate={{ latitude: evt.lat, longitude: evt.lon }}
                       title={title}
                       description={lines}
-                      onPress={() => setSelectedIncident(evt)}
+                      onCalloutPress={() => setSelectedIncident(evt)}
                     >
                       <View
                         style={{
@@ -598,7 +598,6 @@ export default function Hotspots() {
         <View style={styles.modalOverlay}>
           <Pressable style={styles.modalBackdrop} onPress={() => setSelectedIncident(null)} />
           <View style={styles.sheet}>
-            <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.sheetEyebrow}>Incident Detail</Text>
@@ -686,31 +685,27 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    justifyContent: "flex-end",
+    justifyContent: "center",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 24,
     backgroundColor: "rgba(0, 0, 0, 0.55)",
   },
   modalBackdrop: {
     ...StyleSheet.absoluteFillObject,
   },
   sheet: {
-    maxHeight: "72%",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    width: "100%",
+    maxWidth: 420,
+    maxHeight: "78%",
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: "#2a2a2a",
     backgroundColor: "#0f0f10",
     paddingHorizontal: 18,
-    paddingTop: 10,
+    paddingTop: 18,
     paddingBottom: 24,
     overflow: "hidden",
-  },
-  sheetHandle: {
-    alignSelf: "center",
-    width: 42,
-    height: 5,
-    borderRadius: 999,
-    backgroundColor: "#3a3a3a",
-    marginBottom: 14,
   },
   sheetHeader: {
     flexDirection: "row",
