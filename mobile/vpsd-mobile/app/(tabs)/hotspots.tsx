@@ -105,20 +105,14 @@ function formatCodeDetail(evt: Incident): string | null {
   return evt.code_section || evt.offense_code || null;
 }
 
-function formatFieldLabel(key: string): string {
-  return key
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function formatFieldValue(key: string, value: unknown): string {
+function formatIncidentValue(value: unknown, options?: { dateTime?: boolean; coordinate?: boolean }): string {
   if (value === null || value === undefined || value === "") {
     return "Not provided";
   }
-  if (key === "occurred_at" && typeof value === "string") {
+  if (options?.dateTime && typeof value === "string") {
     return formatIncidentDateTime(value);
   }
-  if ((key === "lat" || key === "lon") && typeof value === "number") {
+  if (options?.coordinate && typeof value === "number") {
     return value.toFixed(6);
   }
   return String(value);
@@ -347,32 +341,19 @@ export default function Hotspots() {
     typeof cells?.[0]?.grid_lon === "number" ? cells[0].grid_lon! : -117.1611;
 
   const incidentDetailRows = selectedIncident
-    ? (() => {
-        const preferredOrder = [
-          "id",
-          "external_id",
-          "incident_type",
-          "offense_category",
-          "occurred_at",
-          "block_address",
-          "code_section",
-          "offense_code",
-          "source",
-          "lat",
-          "lon",
-        ];
-        const incidentRecord = selectedIncident as Record<string, unknown>;
-        const orderedKeys = [
-          ...preferredOrder.filter((key) => key in incidentRecord),
-          ...Object.keys(incidentRecord).filter((key) => !preferredOrder.includes(key)),
-        ];
-
-        return orderedKeys.map((key) => ({
-          key,
-          label: formatFieldLabel(key),
-          value: formatFieldValue(key, incidentRecord[key]),
-        }));
-      })()
+    ? [
+        { key: "incident_type", label: "Incident Type", value: formatIncidentValue(selectedIncident.incident_type) },
+        { key: "offense_category", label: "Category", value: formatIncidentValue(selectedIncident.offense_category) },
+        { key: "occurred_at", label: "Date/Time", value: formatIncidentValue(selectedIncident.occurred_at, { dateTime: true }) },
+        { key: "block_address", label: "Hundred-block", value: formatIncidentValue(selectedIncident.block_address) },
+        { key: "code_section", label: "Code Section", value: formatIncidentValue(selectedIncident.code_section) },
+        { key: "offense_code", label: "Offense Code", value: formatIncidentValue(selectedIncident.offense_code) },
+        { key: "source", label: "Source", value: formatIncidentValue(selectedIncident.source) },
+        { key: "lat", label: "Latitude", value: formatIncidentValue(selectedIncident.lat, { coordinate: true }) },
+        { key: "lon", label: "Longitude", value: formatIncidentValue(selectedIncident.lon, { coordinate: true }) },
+        { key: "external_id", label: "External ID", value: formatIncidentValue(selectedIncident.external_id) },
+        { key: "id", label: "Record ID", value: formatIncidentValue(selectedIncident.id) },
+      ]
     : [];
 
   return (
