@@ -1068,6 +1068,7 @@ def get_events(days: int = 7, current_user: User = Depends(get_current_user)):
             "items": [
                 {
                     "id": inc.id,
+                    "external_id": inc.external_id,
                     "lat": inc.lat,
                     "lon": inc.lon,
                     "occurred_at": inc.occurred_at.isoformat(),

@@ -105,6 +105,25 @@ function formatCodeDetail(evt: Incident): string | null {
   return evt.code_section || evt.offense_code || null;
 }
 
+function formatFieldLabel(key: string): string {
+  return key
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatFieldValue(key: string, value: unknown): string {
+  if (value === null || value === undefined || value === "") {
+    return "Not provided";
+  }
+  if (key === "occurred_at" && typeof value === "string") {
+    return formatIncidentDateTime(value);
+  }
+  if ((key === "lat" || key === "lon") && typeof value === "number") {
+    return value.toFixed(6);
+  }
+  return String(value);
+}
+
 
 async function safeJson<T>(res: Response): Promise<T> {
   const text = await res.text();
@@ -301,15 +320,32 @@ export default function Hotspots() {
     typeof cells?.[0]?.grid_lon === "number" ? cells[0].grid_lon! : -117.1611;
 
   const incidentDetailRows = selectedIncident
-    ? [
-        { label: "Incident Type", value: selectedIncident.incident_type || "Unknown" },
-        { label: "Category", value: selectedIncident.offense_category || "Not provided" },
-        { label: "Date/Time", value: formatIncidentDateTime(selectedIncident.occurred_at) },
-        { label: "Hundred-block", value: selectedIncident.block_address || "Not provided" },
-        { label: "Code Section", value: selectedIncident.code_section || "Not provided" },
-        { label: "Offense Code", value: selectedIncident.offense_code || "Not provided" },
-        { label: "Source", value: selectedIncident.source || "Not provided" },
-      ]
+    ? (() => {
+        const preferredOrder = [
+          "id",
+          "external_id",
+          "incident_type",
+          "offense_category",
+          "occurred_at",
+          "block_address",
+          "code_section",
+          "offense_code",
+          "source",
+          "lat",
+          "lon",
+        ];
+        const incidentRecord = selectedIncident as Record<string, unknown>;
+        const orderedKeys = [
+          ...preferredOrder.filter((key) => key in incidentRecord),
+          ...Object.keys(incidentRecord).filter((key) => !preferredOrder.includes(key)),
+        ];
+
+        return orderedKeys.map((key) => ({
+          key,
+          label: formatFieldLabel(key),
+          value: formatFieldValue(key, incidentRecord[key]),
+        }));
+      })()
     : [];
 
   return (
@@ -605,7 +641,7 @@ export default function Hotspots() {
                   {selectedIncident?.incident_type || "Incident"}
                 </Text>
                 <Text style={styles.sheetSubtitle}>
-                  {selectedIncident?.offense_category || "Public dataset record"}
+                  {selectedIncident ? `${incidentDetailRows.length} fields available` : "Public dataset record"}
                 </Text>
               </View>
               <TouchableOpacity
@@ -622,18 +658,11 @@ export default function Hotspots() {
               showsVerticalScrollIndicator
             >
               {incidentDetailRows.map((row) => (
-                <View key={row.label} style={styles.detailRow}>
+                <View key={row.key} style={styles.detailRow}>
                   <Text style={styles.detailLabel}>{row.label}</Text>
                   <Text style={styles.detailValue}>{row.value}</Text>
                 </View>
               ))}
-
-              {selectedIncident && formatCodeDetail(selectedIncident) ? (
-                <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Combined Code</Text>
-                  <Text style={styles.detailValue}>{formatCodeDetail(selectedIncident)}</Text>
-                </View>
-              ) : null}
             </ScrollView>
           </View>
         </View>
