@@ -595,8 +595,9 @@ export default function Hotspots() {
         animationType="slide"
         onRequestClose={() => setSelectedIncident(null)}
       >
-        <Pressable style={styles.modalOverlay} onPress={() => setSelectedIncident(null)}>
-          <Pressable style={styles.sheet} onPress={() => {}}>
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setSelectedIncident(null)} />
+          <View style={styles.sheet}>
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <View style={{ flex: 1 }}>
@@ -619,7 +620,7 @@ export default function Hotspots() {
             <ScrollView
               style={styles.sheetBody}
               contentContainerStyle={styles.sheetBodyContent}
-              showsVerticalScrollIndicator={false}
+              showsVerticalScrollIndicator
             >
               {incidentDetailRows.map((row) => (
                 <View key={row.label} style={styles.detailRow}>
@@ -635,8 +636,8 @@ export default function Hotspots() {
                 </View>
               ) : null}
             </ScrollView>
-          </Pressable>
-        </Pressable>
+          </View>
+        </View>
       </Modal>
     </View>
   );
@@ -688,6 +689,9 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     backgroundColor: "rgba(0, 0, 0, 0.55)",
   },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
   sheet: {
     maxHeight: "72%",
     borderTopLeftRadius: 20,
@@ -698,6 +702,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingTop: 10,
     paddingBottom: 24,
+    overflow: "hidden",
   },
   sheetHandle: {
     alignSelf: "center",
@@ -745,7 +750,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   sheetBody: {
-    flexGrow: 0,
+    flex: 1,
   },
   sheetBodyContent: {
     paddingBottom: 8,
