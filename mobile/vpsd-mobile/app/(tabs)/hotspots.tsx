@@ -124,6 +124,28 @@ function formatFieldValue(key: string, value: unknown): string {
   return String(value);
 }
 
+function buildPullSuccessMessage(params: {
+  inserted: number;
+  source: string;
+  hotspotCells: number;
+  mapLayer: "hotspots" | "incidents" | "forecast";
+}): string {
+  const { inserted, source, hotspotCells, mapLayer } = params;
+  const incidentLine =
+    inserted > 0
+      ? `${inserted} new incident${inserted === 1 ? "" : "s"} pulled from ${source}.`
+      : "No new incidents found. Existing incidents were refreshed.";
+  const hotspotLine =
+    hotspotCells > 0
+      ? `Hotspots recomputed: ${hotspotCells} cell${hotspotCells === 1 ? "" : "s"}.`
+      : "Hotspots recomputed.";
+
+  if (mapLayer === "incidents") {
+    return `${incidentLine}\n\n${hotspotLine}`;
+  }
+  return `${hotspotLine}\n\n${incidentLine}`;
+}
+
 
 async function safeJson<T>(res: Response): Promise<T> {
   const text = await res.text();
@@ -293,7 +315,12 @@ export default function Hotspots() {
       await refresh();
       Alert.alert(
         "Events Pulled",
-        `${inserted} incidents from ${data.source} and computed ${hotData.cells ?? 0} hotspot cells`
+        buildPullSuccessMessage({
+          inserted,
+          source: data.source || "sdpd_nibrs",
+          hotspotCells: hotData.cells ?? 0,
+          mapLayer,
+        })
       );
     } catch (e: any) {
       console.log("[hotspots] pullEvents error:", e?.message || e);
@@ -641,7 +668,7 @@ export default function Hotspots() {
                   {selectedIncident?.incident_type || "Incident"}
                 </Text>
                 <Text style={styles.sheetSubtitle}>
-                  {selectedIncident ? `${incidentDetailRows.length} fields available` : "Public dataset record"}
+                  {selectedIncident?.offense_category || "Public dataset record"}
                 </Text>
               </View>
               <TouchableOpacity
@@ -657,6 +684,7 @@ export default function Hotspots() {
               contentContainerStyle={styles.sheetBodyContent}
               showsVerticalScrollIndicator
             >
+              <Text style={styles.fieldSectionTitle}>Available Fields</Text>
               {incidentDetailRows.map((row) => (
                 <View key={row.key} style={styles.detailRow}>
                   <Text style={styles.detailLabel}>{row.label}</Text>
@@ -779,6 +807,13 @@ const styles = StyleSheet.create({
   sheetBodyContent: {
     paddingBottom: 8,
     gap: 10,
+  },
+  fieldSectionTitle: {
+    color: "#d6dae1",
+    fontSize: 13,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    marginBottom: 2,
   },
   detailRow: {
     borderRadius: 14,
