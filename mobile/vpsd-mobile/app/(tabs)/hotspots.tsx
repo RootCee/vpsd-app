@@ -190,7 +190,6 @@ export default function Hotspots() {
   const [viewMode, setViewMode] = useState<"map" | "list">("map");
   const [mapLayer, setMapLayer] = useState<"hotspots" | "incidents" | "forecast">("hotspots");
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
-  const [previewIncident, setPreviewIncident] = useState<Incident | null>(null);
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
 
   // Lazy-fetch only the data needed for a given layer
@@ -334,10 +333,6 @@ export default function Hotspots() {
   useEffect(() => {
     fetchLayer(mapLayer);
   }, [mapLayer]);
-
-  useEffect(() => {
-    setPreviewIncident(null);
-  }, [mapLayer, viewMode]);
 
   // Pick a “center” for the map. If we have data, use the first cell.
   const centerLat =
@@ -506,9 +501,16 @@ export default function Hotspots() {
                     <Marker
                       key={`evt-${evt.id}`}
                       coordinate={{ latitude: evt.lat, longitude: evt.lon }}
-                      onPress={() => setPreviewIncident(evt)}
+                      title={title}
+                      description={[
+                        evt.offense_category ? `Category: ${evt.offense_category}` : "Category unavailable",
+                        formatIncidentValue(evt.occurred_at, { dateTime: true }),
+                      ].join("\n")}
+                      onCalloutPress={() => setSelectedIncident(evt)}
+                      tracksViewChanges={false}
                     >
                       <View
+                        pointerEvents="none"
                         style={{
                           width: sz,
                           height: sz,
@@ -605,28 +607,6 @@ export default function Hotspots() {
               )}
             </View>
 
-            {mapLayer === "incidents" && previewIncident && !selectedIncident && (
-              <Pressable
-                style={styles.previewCard}
-                onPress={() => {
-                  setSelectedIncident(previewIncident);
-                  setPreviewIncident(null);
-                }}
-              >
-                <Text style={styles.previewTitle}>
-                  {previewIncident.incident_type || "Incident"}
-                </Text>
-                <Text style={styles.previewMeta}>
-                  {previewIncident.offense_category || "Category unavailable"}
-                </Text>
-                <Text style={styles.previewMeta}>
-                  {formatIncidentValue(previewIncident.occurred_at, { dateTime: true })}
-                </Text>
-                <View style={styles.previewButton}>
-                  <Text style={styles.previewButtonText}>View Full Details</Text>
-                </View>
-              </Pressable>
-            )}
           </View>
         ) : (
           <FlatList
@@ -668,10 +648,7 @@ export default function Hotspots() {
         <View style={styles.modalOverlay}>
           <Pressable
             style={styles.modalBackdrop}
-            onPress={() => {
-              setSelectedIncident(null);
-              setPreviewIncident(null);
-            }}
+            onPress={() => setSelectedIncident(null)}
           />
           <View style={styles.sheet}>
             <View style={styles.sheetHeader}>
@@ -685,10 +662,7 @@ export default function Hotspots() {
                 </Text>
               </View>
               <TouchableOpacity
-                onPress={() => {
-                  setSelectedIncident(null);
-                  setPreviewIncident(null);
-                }}
+                onPress={() => setSelectedIncident(null)}
                 style={styles.sheetCloseBtn}
               >
                 <Text style={styles.sheetCloseText}>Close</Text>
@@ -762,41 +736,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#2a2a2a",
     backgroundColor: "#111",
-  },
-  previewCard: {
-    position: "absolute",
-    left: 16,
-    right: 16,
-    bottom: 18,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#2a2a2a",
-    backgroundColor: "rgba(15, 15, 16, 0.96)",
-    padding: 14,
-  },
-  previewTitle: {
-    color: "#ffffff",
-    fontSize: 18,
-    fontWeight: "800",
-    marginBottom: 6,
-  },
-  previewMeta: {
-    color: "#d1d5db",
-    fontSize: 14,
-    lineHeight: 20,
-    marginBottom: 4,
-  },
-  previewButton: {
-    marginTop: 10,
-    borderRadius: 10,
-    backgroundColor: "#ffffff",
-    paddingVertical: 9,
-    alignItems: "center",
-  },
-  previewButtonText: {
-    color: "#111827",
-    fontSize: 13,
-    fontWeight: "800",
   },
   modalOverlay: {
     flex: 1,
