@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
   Platform,
 } from "react-native";
 import { useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import { authenticatedFetch, getErrorMessage, parseApiResponse } from "../../../src/api/client";
 import { useAuth } from "../../../src/auth/AuthContext";
 
@@ -134,9 +135,11 @@ export default function Triage() {
     }
   };
 
-  useEffect(() => {
-    refresh();
-  }, []);
+  useFocusEffect(
+    React.useCallback(() => {
+      refresh();
+    }, [])
+  );
 
   const headerStats = useMemo(() => {
     const total = items.length;

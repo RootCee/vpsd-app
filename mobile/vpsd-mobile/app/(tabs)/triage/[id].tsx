@@ -167,6 +167,37 @@ export default function ClientDetail() {
     }
   };
 
+  const confirmDelete = () => {
+    if (!client || saving) return;
+
+    Alert.alert("Delete this client entry?", "This action cannot be undone.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          setSaving(true);
+          try {
+            const res = await authenticatedFetch(`/triage/clients/${clientId}`, {
+              method: "DELETE",
+            });
+            await parseApiResponse<{ success?: boolean }>(res, "Unable to delete this client.");
+            Alert.alert("Deleted", "Client entry deleted.", [
+              {
+                text: "OK",
+                onPress: () => router.replace("/(tabs)/triage"),
+              },
+            ]);
+          } catch (e: any) {
+            Alert.alert("Delete Failed", getErrorMessage(e, "Could not delete this client."));
+          } finally {
+            setSaving(false);
+          }
+        },
+      },
+    ]);
+  };
+
   const renderHeader = () => (
     <>
       <Text style={styles.title}>{client?.display_name || "Client"}</Text>
@@ -194,6 +225,7 @@ export default function ClientDetail() {
       <View style={{ gap: 10 }}>
         <Button title="Log Contact" onPress={() => router.push(`/(tabs)/triage/${clientId}/log`)} />
         <Button title={saving ? "Saving..." : "Save Plan"} onPress={savePlan} disabled={saving} />
+        <Button title={saving ? "Deleting..." : "Delete Client"} onPress={confirmDelete} color="#b91c1c" disabled={saving} />
       </View>
 
       <Text style={styles.section}>Plan</Text>

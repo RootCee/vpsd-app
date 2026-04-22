@@ -718,6 +718,29 @@ def get_client(client_id: int, current_user: User = Depends(get_current_user)):
         db.close()
 
 
+@app.delete("/triage/clients/{client_id}")
+def delete_client(client_id: int, current_user: User = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        c = db.query(Client).filter(Client.id == client_id).first()
+        if not c:
+            raise HTTPException(404, "Client not found")
+
+        db.query(ContactLog).filter(ContactLog.client_id == client_id).delete()
+        db.delete(c)
+        db.commit()
+
+        return {"success": True, "client_id": client_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"delete_client failed: {e}")
+    finally:
+        db.close()
+
+
 @app.post("/triage/clients/{client_id}/contacts")
 def log_contact(client_id: int, payload: dict, current_user: User = Depends(get_current_user)):
     outcome = (payload.get("outcome") or "").strip()

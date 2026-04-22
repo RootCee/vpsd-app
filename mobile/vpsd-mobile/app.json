@@ -4,7 +4,7 @@
     "slug": "vpsd-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/hopebridge-icon.png",
     "scheme": "hopebridge",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
