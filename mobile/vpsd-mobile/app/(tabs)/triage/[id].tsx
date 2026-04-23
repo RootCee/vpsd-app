@@ -24,6 +24,9 @@ type Contact = {
   contacted_at: string;
   outcome: string;
   note?: string | null;
+  created_by_user_id?: number | null;
+  created_by_name?: string | null;
+  visibility?: "private" | string | null;
 };
 
 type NearestHotspot = null | {
@@ -343,8 +346,14 @@ export default function ClientDetail() {
         ListHeaderComponent={renderHeader}
         renderItem={({ item }) => (
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>{item.outcome.toUpperCase()}</Text>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>{item.outcome.toUpperCase()}</Text>
+              {item.visibility ? <Text style={styles.privateBadge}>Private</Text> : null}
+            </View>
             <Text style={styles.cardText}>{new Date(item.contacted_at).toLocaleString()}</Text>
+            <Text style={styles.cardSub}>
+              Created by: {item.created_by_user_id === user?.id ? "You" : (item.created_by_name || "Unknown")}
+            </Text>
             {!!item.note && <Text style={styles.cardText}>{item.note}</Text>}
           </View>
         )}
@@ -412,7 +421,20 @@ const styles = StyleSheet.create({
   pillActive: { color: "white", borderColor: "#5b8cff" },
 
   card: { backgroundColor: "#111", borderColor: "#2a2a2a", borderWidth: 1, borderRadius: 12, padding: 12, marginTop: 10 },
+  cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },
   cardTitle: { color: "white", fontWeight: "800" },
   cardText: { color: "#cfcfcf", marginTop: 4 },
   cardSub: { marginTop: 6, color: "#9aa0a6", fontSize: 12 },
+  privateBadge: {
+    color: "#dbeafe",
+    backgroundColor: "#1e3a8a",
+    borderColor: "#2563eb",
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    fontSize: 11,
+    fontWeight: "800",
+    overflow: "hidden",
+  },
 });

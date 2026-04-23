@@ -744,6 +744,13 @@ def get_client(client_id: int, current_user: User = Depends(get_current_user)):
             contacts_query = contacts_query.filter(ContactLog.created_by_user_id == current_user.id)
 
         contacts = contacts_query.order_by(ContactLog.contacted_at.desc()).all()
+        contact_owner_ids = {
+            cl.created_by_user_id for cl in contacts if cl.created_by_user_id is not None
+        }
+        owner_names = {}
+        if contact_owner_ids:
+            owners = db.query(User.id, User.name).filter(User.id.in_(contact_owner_ids)).all()
+            owner_names = {owner_id: owner_name for owner_id, owner_name in owners}
 
         return {
             "client": serialize_client(c, current_user),
@@ -753,6 +760,9 @@ def get_client(client_id: int, current_user: User = Depends(get_current_user)):
                     "contacted_at": cl.contacted_at.isoformat(),
                     "outcome": cl.outcome,
                     "note": cl.note,
+                    "created_by_user_id": cl.created_by_user_id,
+                    "created_by_name": owner_names.get(cl.created_by_user_id),
+                    "visibility": "private",
                 }
                 for cl in contacts
             ],
