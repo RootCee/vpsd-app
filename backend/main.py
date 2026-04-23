@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, inspect, text
 
 from db import SessionLocal, engine, Base
-from models import Incident, HotspotCell, Client, ContactLog, User
+from models import Incident, HotspotCell, Client, ContactLog, ContactLogShare, User
 from auth import hash_password, verify_password, create_access_token, get_current_user
 
 # ArcGIS FeatureServer for SDPD NIBRS (City of San Diego hosted)
@@ -104,6 +104,10 @@ class ResetPasswordResponse(BaseModel):
 
 class UsersListResponse(BaseModel):
     users: list[UserResponse]
+
+
+class ShareContactLogPayload(BaseModel):
+    user_ids: list[int] = Field(default_factory=list)
 
 
 def _upsert_bootstrap_user(
@@ -318,12 +322,14 @@ def reset_password(payload: ResetPasswordPayload, current_user: User = Depends(g
 
 @app.get("/auth/users", response_model=UsersListResponse)
 def list_users(current_user: User = Depends(get_current_user)):
-    if current_user.role != "admin":
-        raise HTTPException(403, "Admin access required")
-
     db = SessionLocal()
     try:
-        users = db.query(User).order_by(User.created_at.desc(), User.id.desc()).all()
+        users = (
+            db.query(User)
+            .filter(User.is_active.is_(True))
+            .order_by(func.lower(func.coalesce(User.name, User.email)), User.id.asc())
+            .all()
+        )
         return {"users": [UserResponse.model_validate(user) for user in users]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Unable to load users: {e}")
@@ -620,6 +626,15 @@ def _can_manage_client(client: Client, current_user: User) -> bool:
     return client.created_by_user_id is not None and client.created_by_user_id == current_user.id
 
 
+def _can_share_contact_log(contact_log: ContactLog, current_user: User) -> bool:
+    if _is_admin(current_user):
+        return True
+    return (
+        contact_log.created_by_user_id is not None
+        and contact_log.created_by_user_id == current_user.id
+    )
+
+
 def serialize_client(c: Client, current_user: Optional[User] = None):
     can_view_private_notes = current_user is None or _can_manage_client(c, current_user)
     return {
@@ -741,16 +756,46 @@ def get_client(client_id: int, current_user: User = Depends(get_current_user)):
         if _is_admin(current_user):
             contacts_query = contacts_query.filter(ContactLog.created_by_user_id.is_not(None))
         else:
-            contacts_query = contacts_query.filter(ContactLog.created_by_user_id == current_user.id)
+            shared_contact_ids = (
+                db.query(ContactLogShare.contact_log_id)
+                .filter(ContactLogShare.shared_with_user_id == current_user.id)
+                .subquery()
+            )
+            contacts_query = contacts_query.filter(
+                (ContactLog.created_by_user_id == current_user.id)
+                | (ContactLog.id.in_(shared_contact_ids))
+            )
 
         contacts = contacts_query.order_by(ContactLog.contacted_at.desc()).all()
         contact_owner_ids = {
             cl.created_by_user_id for cl in contacts if cl.created_by_user_id is not None
         }
-        owner_names = {}
-        if contact_owner_ids:
-            owners = db.query(User.id, User.name).filter(User.id.in_(contact_owner_ids)).all()
-            owner_names = {owner_id: owner_name for owner_id, owner_name in owners}
+        contact_ids = [cl.id for cl in contacts]
+        shares_by_log: dict[int, list[ContactLogShare]] = {}
+        shared_user_ids: set[int] = set()
+        if contact_ids:
+            share_rows = (
+                db.query(ContactLogShare)
+                .filter(ContactLogShare.contact_log_id.in_(contact_ids))
+                .order_by(ContactLogShare.id.asc())
+                .all()
+            )
+            for share in share_rows:
+                shares_by_log.setdefault(share.contact_log_id, []).append(share)
+                shared_user_ids.add(share.shared_with_user_id)
+
+        user_lookup_ids = contact_owner_ids | shared_user_ids
+        user_lookup = {}
+        if user_lookup_ids:
+            users = (
+                db.query(User.id, User.name, User.email)
+                .filter(User.id.in_(user_lookup_ids))
+                .all()
+            )
+            user_lookup = {
+                user_id: {"id": user_id, "name": user_name, "email": user_email}
+                for user_id, user_name, user_email in users
+            }
 
         return {
             "client": serialize_client(c, current_user),
@@ -761,8 +806,13 @@ def get_client(client_id: int, current_user: User = Depends(get_current_user)):
                     "outcome": cl.outcome,
                     "note": cl.note,
                     "created_by_user_id": cl.created_by_user_id,
-                    "created_by_name": owner_names.get(cl.created_by_user_id),
-                    "visibility": "private",
+                    "created_by_name": (user_lookup.get(cl.created_by_user_id) or {}).get("name"),
+                    "visibility": "shared" if shares_by_log.get(cl.id) else "private",
+                    "shared_with_users": [
+                        user_lookup.get(share.shared_with_user_id)
+                        for share in shares_by_log.get(cl.id, [])
+                        if user_lookup.get(share.shared_with_user_id)
+                    ],
                 }
                 for cl in contacts
             ],
@@ -841,6 +891,76 @@ def log_contact(client_id: int, payload: dict, current_user: User = Depends(get_
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"log_contact failed: {e}")
+    finally:
+        db.close()
+
+
+@app.post("/triage/contact-logs/{log_id}/share")
+def share_contact_log(log_id: int, payload: ShareContactLogPayload, current_user: User = Depends(get_current_user)):
+    requested_user_ids = list(dict.fromkeys(payload.user_ids))
+    if not requested_user_ids:
+        raise HTTPException(400, "At least one user_id is required.")
+
+    db = SessionLocal()
+    try:
+        contact_log = db.query(ContactLog).filter(ContactLog.id == log_id).first()
+        if not contact_log or contact_log.created_by_user_id is None:
+            raise HTTPException(404, "Contact log not found")
+
+        if not _can_share_contact_log(contact_log, current_user):
+            raise HTTPException(403, "You do not have permission to share this note.")
+
+        target_users = (
+            db.query(User)
+            .filter(User.id.in_(requested_user_ids), User.is_active.is_(True))
+            .all()
+        )
+        valid_target_ids = {
+            user.id for user in target_users if user.id != contact_log.created_by_user_id
+        }
+        if not valid_target_ids:
+            raise HTTPException(400, "No valid users selected for sharing.")
+
+        existing_shares = (
+            db.query(ContactLogShare)
+            .filter(ContactLogShare.contact_log_id == log_id)
+            .all()
+        )
+        existing_by_user = {share.shared_with_user_id: share for share in existing_shares}
+
+        for share in existing_shares:
+            if share.shared_with_user_id not in valid_target_ids:
+                db.delete(share)
+
+        for user_id in valid_target_ids:
+            if user_id in existing_by_user:
+                continue
+            db.add(
+                ContactLogShare(
+                    contact_log_id=log_id,
+                    shared_with_user_id=user_id,
+                    created_by_user_id=current_user.id,
+                )
+            )
+
+        db.commit()
+
+        shared_with_users = [
+            {"id": user.id, "name": user.name, "email": user.email}
+            for user in target_users
+            if user.id in valid_target_ids
+        ]
+        return {
+            "success": True,
+            "contact_log_id": log_id,
+            "visibility": "shared",
+            "shared_with_users": shared_with_users,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"share_contact_log failed: {e}")
     finally:
         db.close()
 

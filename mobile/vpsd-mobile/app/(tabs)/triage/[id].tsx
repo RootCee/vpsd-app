@@ -8,6 +8,7 @@ import {
   Alert,
   Platform,
   Pressable,
+  Modal,
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useLocalSearchParams, useRouter } from "expo-router";
@@ -27,6 +28,19 @@ type Contact = {
   created_by_user_id?: number | null;
   created_by_name?: string | null;
   visibility?: "private" | string | null;
+  shared_with_users?: SharedUser[];
+};
+
+type SharedUser = {
+  id: number;
+  name?: string | null;
+  email: string;
+};
+
+type UserItem = {
+  id: number;
+  name?: string | null;
+  email: string;
 };
 
 type NearestHotspot = null | {
@@ -67,6 +81,11 @@ export default function ClientDetail() {
   const [client, setClient] = useState<Client | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [saving, setSaving] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareTarget, setShareTarget] = useState<Contact | null>(null);
+  const [shareUsers, setShareUsers] = useState<UserItem[]>([]);
+  const [selectedShareUserIds, setSelectedShareUserIds] = useState<number[]>([]);
+  const [shareLoading, setShareLoading] = useState(false);
 
   // Follow-up picker state
   const [showPicker, setShowPicker] = useState(false);
@@ -87,6 +106,7 @@ export default function ClientDetail() {
   }, [client]);
 
   const canDeleteClient = !!client && (user?.role === "admin" || client.created_by_user_id === user?.id);
+  const canShareNote = (contact: Contact) => user?.role === "admin" || contact.created_by_user_id === user?.id;
 
   const load = async () => {
     if (!isAuthenticated) {
@@ -223,6 +243,52 @@ export default function ClientDetail() {
     ]);
   };
 
+  const openShareModal = async (contact: Contact) => {
+    setShareTarget(contact);
+    setSelectedShareUserIds((contact.shared_with_users || []).map((sharedUser) => sharedUser.id));
+    setShowShareModal(true);
+
+    if (shareUsers.length > 0) return;
+
+    setShareLoading(true);
+    try {
+      const res = await authenticatedFetch("/auth/users");
+      const data = await parseApiResponse<{ users?: UserItem[] }>(res, "Unable to load users.");
+      setShareUsers(Array.isArray(data.users) ? data.users : []);
+    } catch (e: any) {
+      Alert.alert("Share Unavailable", getErrorMessage(e, "Could not load users to share with."));
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  const toggleShareUser = (userId: number) => {
+    setSelectedShareUserIds((current) =>
+      current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId]
+    );
+  };
+
+  const submitShare = async () => {
+    if (!shareTarget) return;
+
+    setShareLoading(true);
+    try {
+      const res = await authenticatedFetch(`/triage/contact-logs/${shareTarget.id}/share`, {
+        method: "POST",
+        body: JSON.stringify({ user_ids: selectedShareUserIds }),
+      });
+      await parseApiResponse(res, "Unable to share this note.");
+      setShowShareModal(false);
+      setShareTarget(null);
+      await load();
+      Alert.alert("Shared", "Note sharing updated.");
+    } catch (e: any) {
+      Alert.alert("Share Failed", getErrorMessage(e, "Could not update note sharing."));
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
   const renderHeader = () => (
     <>
       <Text style={styles.title}>{client?.display_name || "Client"}</Text>
@@ -348,18 +414,99 @@ export default function ClientDetail() {
           <View style={styles.card}>
             <View style={styles.cardHeader}>
               <Text style={styles.cardTitle}>{item.outcome.toUpperCase()}</Text>
-              {item.visibility ? <Text style={styles.privateBadge}>Private</Text> : null}
+              <View style={styles.cardHeaderRight}>
+                <Text style={item.visibility === "shared" ? styles.sharedBadge : styles.privateBadge}>
+                  {item.visibility === "shared"
+                    ? `Shared with ${item.shared_with_users?.length || 0}`
+                    : "Private"}
+                </Text>
+                {canShareNote(item) ? (
+                  <Pressable style={styles.shareBtn} onPress={() => openShareModal(item)}>
+                    <Text style={styles.shareBtnText}>Share</Text>
+                  </Pressable>
+                ) : null}
+              </View>
             </View>
             <Text style={styles.cardText}>{new Date(item.contacted_at).toLocaleString()}</Text>
             <Text style={styles.cardSub}>
               Created by: {item.created_by_user_id === user?.id ? "You" : (item.created_by_name || "Unknown")}
             </Text>
+            {item.visibility === "shared" && item.shared_with_users?.length ? (
+              <Text style={styles.cardSub}>
+                Shared with: {item.shared_with_users.map((sharedUser) => sharedUser.name || sharedUser.email).join(", ")}
+              </Text>
+            ) : null}
             {!!item.note && <Text style={styles.cardText}>{item.note}</Text>}
           </View>
         )}
         ListEmptyComponent={<Text style={{ color: "#aaa", marginTop: 10 }}>No contacts logged yet.</Text>}
         contentContainerStyle={styles.listContent}
       />
+
+      <Modal
+        visible={showShareModal}
+        animationType="slide"
+        transparent
+        onRequestClose={() => {
+          if (shareLoading) return;
+          setShowShareModal(false);
+          setShareTarget(null);
+        }}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Share Note</Text>
+            <Text style={styles.modalSubtitle}>
+              Select one or more users to give direct access to this note.
+            </Text>
+
+            <FlatList
+              data={shareUsers.filter((shareUser) => shareUser.id !== shareTarget?.created_by_user_id)}
+              keyExtractor={(item) => String(item.id)}
+              style={styles.shareList}
+              ListEmptyComponent={
+                <Text style={styles.cardSub}>{shareLoading ? "Loading users..." : "No users available."}</Text>
+              }
+              renderItem={({ item }) => {
+                const selected = selectedShareUserIds.includes(item.id);
+                return (
+                  <Pressable
+                    style={[styles.shareUserRow, selected ? styles.shareUserRowSelected : null]}
+                    onPress={() => toggleShareUser(item.id)}
+                    disabled={shareLoading}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.shareUserName}>{item.name || item.email}</Text>
+                      <Text style={styles.cardSub}>{item.email}</Text>
+                    </View>
+                    <Text style={styles.shareCheck}>{selected ? "Selected" : "Select"}</Text>
+                  </Pressable>
+                );
+              }}
+            />
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={[styles.modalBtn, styles.modalBtnAlt]}
+                onPress={() => {
+                  if (shareLoading) return;
+                  setShowShareModal(false);
+                  setShareTarget(null);
+                }}
+              >
+                <Text style={styles.modalBtnText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.modalBtn, shareLoading ? styles.modalBtnDisabled : null]}
+                onPress={submitShare}
+                disabled={shareLoading}
+              >
+                <Text style={styles.modalBtnText}>{shareLoading ? "Saving..." : "Save Share"}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -422,6 +569,7 @@ const styles = StyleSheet.create({
 
   card: { backgroundColor: "#111", borderColor: "#2a2a2a", borderWidth: 1, borderRadius: 12, padding: 12, marginTop: 10 },
   cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },
+  cardHeaderRight: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1 },
   cardTitle: { color: "white", fontWeight: "800" },
   cardText: { color: "#cfcfcf", marginTop: 4 },
   cardSub: { marginTop: 6, color: "#9aa0a6", fontSize: 12 },
@@ -437,4 +585,71 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     overflow: "hidden",
   },
+  sharedBadge: {
+    color: "#dcfce7",
+    backgroundColor: "#166534",
+    borderColor: "#22c55e",
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    fontSize: 11,
+    fontWeight: "800",
+    overflow: "hidden",
+  },
+  shareBtn: {
+    backgroundColor: "#1f2937",
+    borderWidth: 1,
+    borderColor: "#374151",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  shareBtnText: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "center",
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: "#0f0f0f",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#202020",
+    padding: 16,
+    maxHeight: "80%",
+    gap: 12,
+  },
+  modalTitle: { color: "#fff", fontSize: 20, fontWeight: "900" },
+  modalSubtitle: { color: "#9aa0a6", fontSize: 13 },
+  shareList: { maxHeight: 320 },
+  shareUserRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#202020",
+    backgroundColor: "#111",
+    marginTop: 8,
+  },
+  shareUserRowSelected: {
+    borderColor: "#22c55e",
+    backgroundColor: "#0d1f15",
+  },
+  shareUserName: { color: "#fff", fontWeight: "800" },
+  shareCheck: { color: "#d1d5db", fontSize: 12, fontWeight: "700" },
+  modalActions: { flexDirection: "row", gap: 10, justifyContent: "flex-end" },
+  modalBtn: {
+    backgroundColor: "#0b3d91",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  modalBtnAlt: { backgroundColor: "#1f2937" },
+  modalBtnDisabled: { opacity: 0.6 },
+  modalBtnText: { color: "#fff", fontWeight: "800" },
 });

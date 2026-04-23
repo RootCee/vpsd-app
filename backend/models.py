@@ -80,3 +80,13 @@ class ContactLog(Base):
     note = Column(Text, nullable=True)
 
     client = relationship("Client", back_populates="contacts")
+
+
+class ContactLogShare(Base):
+    __tablename__ = "contact_log_shares"
+
+    id = Column(Integer, primary_key=True, index=True)
+    contact_log_id = Column(Integer, ForeignKey("contact_logs.id"), nullable=False, index=True)
+    shared_with_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
