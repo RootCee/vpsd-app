@@ -55,6 +55,21 @@ def _ensure_contact_log_columns() -> None:
                 conn.execute(text(f"ALTER TABLE contact_logs ADD COLUMN {name} {column_type}"))
 
 
+def _ensure_client_columns() -> None:
+    inspector = inspect(engine)
+    if "clients" not in inspector.get_table_names():
+        return
+
+    existing = {col["name"] for col in inspector.get_columns("clients")}
+    needed = {
+        "created_by_user_id": "INTEGER",
+    }
+    with engine.begin() as conn:
+        for name, column_type in needed.items():
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE clients ADD COLUMN {name} {column_type}"))
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -183,6 +198,7 @@ def on_startup():
     Base.metadata.create_all(bind=engine)
     _ensure_incident_columns()
     _ensure_contact_log_columns()
+    _ensure_client_columns()
     _sync_bootstrap_users()
 
 
@@ -207,6 +223,7 @@ def admin_init():
     Base.metadata.create_all(bind=engine)
     _ensure_incident_columns()
     _ensure_contact_log_columns()
+    _ensure_client_columns()
     bootstrap = _sync_bootstrap_users()
     return {"status": "initialized", "users": bootstrap}
 
@@ -593,12 +610,24 @@ def hotspot_forecast(source: str = "sdpd_nibrs", current_user: User = Depends(ge
 # ---------------------------
 # TRIAGE
 # ---------------------------
-def serialize_client(c: Client):
+def _is_admin(user: User) -> bool:
+    return (user.role or "").strip().lower() == "admin"
+
+
+def _can_manage_client(client: Client, current_user: User) -> bool:
+    if _is_admin(current_user):
+        return True
+    return client.created_by_user_id is not None and client.created_by_user_id == current_user.id
+
+
+def serialize_client(c: Client, current_user: Optional[User] = None):
+    can_view_private_notes = current_user is None or _can_manage_client(c, current_user)
     return {
         "id": c.id,
         "display_name": c.display_name,
+        "created_by_user_id": c.created_by_user_id,
         "neighborhood": c.neighborhood,
-        "notes": c.notes,
+        "notes": c.notes if can_view_private_notes else None,
         "created_at": c.created_at.isoformat() if c.created_at else None,
         "follow_up_at": c.follow_up_at.isoformat() if c.follow_up_at else None,
         "need_housing": c.need_housing,
@@ -626,6 +655,7 @@ def create_client(payload: dict, current_user: User = Depends(get_current_user))
     try:
         c = Client(
             display_name=name,
+            created_by_user_id=current_user.id,
             neighborhood=(payload.get("neighborhood") or "").strip() or None,
             notes=(payload.get("notes") or "").strip() or None,
             follow_up_at=follow,
@@ -640,7 +670,7 @@ def create_client(payload: dict, current_user: User = Depends(get_current_user))
         db.add(c)
         db.commit()
         db.refresh(c)
-        return {"client": serialize_client(c)}
+        return {"client": serialize_client(c, current_user)}
 
     except Exception as e:
         db.rollback()
@@ -688,7 +718,7 @@ def update_client(client_id: int, payload: dict, current_user: User = Depends(ge
 
         db.commit()
         db.refresh(c)
-        return {"client": serialize_client(c)}
+        return {"client": serialize_client(c, current_user)}
 
     except HTTPException:
         raise
@@ -707,18 +737,16 @@ def get_client(client_id: int, current_user: User = Depends(get_current_user)):
         if not c:
             raise HTTPException(404, "Client not found")
 
-        contacts = (
-            db.query(ContactLog)
-            .filter(
-                ContactLog.client_id == client_id,
-                ContactLog.created_by_user_id == current_user.id,
-            )
-            .order_by(ContactLog.contacted_at.desc())
-            .all()
-        )
+        contacts_query = db.query(ContactLog).filter(ContactLog.client_id == client_id)
+        if _is_admin(current_user):
+            contacts_query = contacts_query.filter(ContactLog.created_by_user_id.is_not(None))
+        else:
+            contacts_query = contacts_query.filter(ContactLog.created_by_user_id == current_user.id)
+
+        contacts = contacts_query.order_by(ContactLog.contacted_at.desc()).all()
 
         return {
-            "client": serialize_client(c),
+            "client": serialize_client(c, current_user),
             "contacts": [
                 {
                     "id": cl.id,
@@ -745,6 +773,9 @@ def delete_client(client_id: int, current_user: User = Depends(get_current_user)
         c = db.query(Client).filter(Client.id == client_id).first()
         if not c:
             raise HTTPException(404, "Client not found")
+
+        if not _can_manage_client(c, current_user):
+            raise HTTPException(403, "You do not have permission to delete this client.")
 
         db.query(ContactLog).filter(ContactLog.client_id == client_id).delete()
         db.delete(c)

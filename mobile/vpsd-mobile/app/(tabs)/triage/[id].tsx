@@ -38,6 +38,7 @@ type NearestHotspot = null | {
 type Client = {
   id: number;
   display_name: string;
+  created_by_user_id?: number | null;
   neighborhood?: string | null;
   notes?: string | null;
   created_at: string;
@@ -81,6 +82,8 @@ export default function ClientDetail() {
       { key: "need_transport" as const, label: "Transport", value: client.need_transport },
     ];
   }, [client]);
+
+  const canDeleteClient = !!client && (user?.role === "admin" || client.created_by_user_id === user?.id);
 
   const load = async () => {
     if (!isAuthenticated) {
@@ -244,7 +247,9 @@ export default function ClientDetail() {
       <View style={{ gap: 10 }}>
         <Button title="Log Contact" onPress={() => router.push(`/(tabs)/triage/${clientId}/log`)} />
         <Button title={saving ? "Saving..." : "Save Plan"} onPress={savePlan} disabled={saving} />
-        <Button title={saving ? "Deleting..." : "Delete Client"} onPress={confirmDelete} color="#b91c1c" disabled={saving} />
+        {canDeleteClient ? (
+          <Button title={saving ? "Deleting..." : "Delete Client"} onPress={confirmDelete} color="#b91c1c" disabled={saving} />
+        ) : null}
       </View>
 
       <Text style={styles.section}>Plan</Text>

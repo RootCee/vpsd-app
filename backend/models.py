@@ -49,6 +49,7 @@ class Client(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     display_name = Column(String(120), nullable=False)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     neighborhood = Column(String(120), nullable=True)
     notes = Column(Text, nullable=True)
 
