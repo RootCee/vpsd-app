@@ -11,11 +11,13 @@ import {
 } from "react-native";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { useFocusEffect } from "@react-navigation/native";
 import {
   authenticatedFetch,
   getErrorMessage,
   parseApiResponse,
 } from "../../../src/api/client";
+import { useAuth } from "../../../src/auth/AuthContext";
 
 type Contact = {
   id: number;
@@ -56,6 +58,7 @@ export default function ClientDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const clientId = Number(id);
+  const { user, isAuthenticated } = useAuth();
 
   const [client, setClient] = useState<Client | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -80,6 +83,14 @@ export default function ClientDetail() {
   }, [client]);
 
   const load = async () => {
+    if (!isAuthenticated) {
+      setClient(null);
+      setContacts([]);
+      setFollowUpDate(null);
+      setNearest(null);
+      return;
+    }
+
     try {
       const res = await authenticatedFetch(`/triage/clients/${clientId}`);
       const data = await parseApiResponse<{ client?: Client | null; contacts?: Contact[] }>(
@@ -122,8 +133,16 @@ export default function ClientDetail() {
   };
 
   useEffect(() => {
-    load();
-  }, [clientId]);
+    setContacts([]);
+    void load();
+  }, [clientId, user?.id, isAuthenticated]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      setContacts([]);
+      void load();
+    }, [clientId, user?.id, isAuthenticated])
+  );
 
   const toggleNeed = (key: keyof Client) => {
     if (!client) return;

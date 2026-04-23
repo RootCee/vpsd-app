@@ -88,4 +88,6 @@ def get_current_user(
     if not user.is_active:
         raise HTTPException(status_code=403, detail="Inactive user")
 
+    # Normalize legacy role values so authorization checks stay consistent.
+    user.role = (user.role or "").strip().lower()
     return user
