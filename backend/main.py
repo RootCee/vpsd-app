@@ -40,6 +40,21 @@ def _ensure_incident_columns() -> None:
                 conn.execute(text(f"ALTER TABLE incidents ADD COLUMN {name} {column_type}"))
 
 
+def _ensure_contact_log_columns() -> None:
+    inspector = inspect(engine)
+    if "contact_logs" not in inspector.get_table_names():
+        return
+
+    existing = {col["name"] for col in inspector.get_columns("contact_logs")}
+    needed = {
+        "created_by_user_id": "INTEGER",
+    }
+    with engine.begin() as conn:
+        for name, column_type in needed.items():
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE contact_logs ADD COLUMN {name} {column_type}"))
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -167,6 +182,7 @@ def on_startup():
     # Creates tables automatically on boot (critical for Render)
     Base.metadata.create_all(bind=engine)
     _ensure_incident_columns()
+    _ensure_contact_log_columns()
     _sync_bootstrap_users()
 
 
@@ -190,6 +206,7 @@ def admin_init():
     # Manual “fix it now” endpoint
     Base.metadata.create_all(bind=engine)
     _ensure_incident_columns()
+    _ensure_contact_log_columns()
     bootstrap = _sync_bootstrap_users()
     return {"status": "initialized", "users": bootstrap}
 
@@ -304,7 +321,7 @@ def auth_me(current_user: User = Depends(get_current_user)):
             "id": current_user.id,
             "name": current_user.name,
             "email": current_user.email,
-            "role": current_user.role,
+            "role": (current_user.role or "").strip().lower(),
             "is_active": current_user.is_active,
         }
     }
@@ -340,7 +357,7 @@ def login(payload: dict):
                 "id": user.id,
                 "name": user.name,
                 "email": user.email,
-                "role": user.role,
+                "role": (user.role or "").strip().lower(),
                 "is_active": user.is_active,
             }
         }
@@ -692,7 +709,10 @@ def get_client(client_id: int, current_user: User = Depends(get_current_user)):
 
         contacts = (
             db.query(ContactLog)
-            .filter(ContactLog.client_id == client_id)
+            .filter(
+                ContactLog.client_id == client_id,
+                ContactLog.created_by_user_id == current_user.id,
+            )
             .order_by(ContactLog.contacted_at.desc())
             .all()
         )
@@ -755,7 +775,12 @@ def log_contact(client_id: int, payload: dict, current_user: User = Depends(get_
         if not c:
             raise HTTPException(404, "Client not found")
 
-        cl = ContactLog(client_id=client_id, outcome=outcome, note=note)
+        cl = ContactLog(
+            client_id=client_id,
+            created_by_user_id=current_user.id,
+            outcome=outcome,
+            note=note,
+        )
         db.add(cl)
         db.commit()
         db.refresh(cl)

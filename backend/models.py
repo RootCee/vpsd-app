@@ -72,6 +72,7 @@ class ContactLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
     contacted_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     outcome = Column(String(32), nullable=False)  # reached|no_answer|referral|other
