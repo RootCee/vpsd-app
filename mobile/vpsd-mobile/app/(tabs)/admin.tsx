@@ -38,7 +38,7 @@ export default function AdminScreen() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<"member" | "admin">("member");
+  const [role, setRole] = useState<"member" | "police" | "admin">("member");
   const [users, setUsers] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -97,7 +97,7 @@ export default function AdminScreen() {
       const data = await parseApiResponse<CreateUserResponse>(res, "Unable to create member.");
       resetForm();
       await loadUsers();
-      Alert.alert("Member Created", `${data.user?.email || trimmedEmail} is ready to sign in.`);
+      Alert.alert("User Created", `${data.user?.email || trimmedEmail} is ready to sign in.`);
     } catch (error) {
       Alert.alert("Create Member Failed", getErrorMessage(error, "Please try again."));
     } finally {
@@ -117,7 +117,7 @@ export default function AdminScreen() {
   return (
     <View style={styles.screen}>
       <Text style={styles.title}>Admin</Text>
-      <Text style={styles.helper}>Create approved members manually. Public registration stays disabled.</Text>
+      <Text style={styles.helper}>Create approved users manually. Public registration stays disabled.</Text>
 
       <View style={styles.card}>
         <Text style={styles.label}>Name</Text>
@@ -158,6 +158,12 @@ export default function AdminScreen() {
             onPress={() => setRole("member")}
           >
             <Text style={styles.roleBtnText}>Member</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.roleBtn, role === "police" ? styles.roleBtnActive : null]}
+            onPress={() => setRole("police")}
+          >
+            <Text style={styles.roleBtnText}>Police</Text>
           </Pressable>
           <Pressable
             style={[styles.roleBtn, role === "admin" ? styles.roleBtnActive : null]}

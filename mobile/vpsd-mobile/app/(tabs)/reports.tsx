@@ -35,6 +35,7 @@ type FieldReport = {
 export default function ReportsScreen() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const isPolice = user?.role === "police";
 
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
@@ -193,7 +194,7 @@ export default function ReportsScreen() {
 
       <View style={styles.card}>
         <View style={styles.inboxHeader}>
-          <Text style={styles.sectionTitle}>{isAdmin ? "Inbox" : "Published Reports"}</Text>
+          <Text style={styles.sectionTitle}>{isAdmin ? "Inbox" : isPolice ? "My & Published Reports" : "Published Reports"}</Text>
           <Pressable style={styles.refreshBtn} onPress={loadReports} disabled={loadingInbox}>
             <Text style={styles.refreshBtnText}>{loadingInbox ? "..." : "Refresh"}</Text>
           </Pressable>

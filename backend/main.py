@@ -287,8 +287,8 @@ def create_user(payload: CreateUserPayload, current_user: User = Depends(get_cur
     if not password:
         raise HTTPException(400, "Password is required.")
 
-    if role not in ("admin", "member"):
-        raise HTTPException(400, "Role must be 'admin' or 'member'.")
+    if role not in ("admin", "member", "police"):
+        raise HTTPException(400, "Role must be 'admin', 'member', or 'police'.")
 
     db = SessionLocal()
     try:
@@ -1066,7 +1066,14 @@ def field_reports(current_user: User = Depends(get_current_user)):
     db = SessionLocal()
     try:
         rows_query = db.query(FieldReport, User).join(User, User.id == FieldReport.sender_user_id)
-        if not _is_admin(current_user):
+        if _is_admin(current_user):
+            pass
+        elif (current_user.role or "").strip().lower() == "police":
+            rows_query = rows_query.filter(
+                (FieldReport.sender_user_id == current_user.id)
+                | (FieldReport.published_to_all.is_(True))
+            )
+        else:
             rows_query = rows_query.filter(FieldReport.published_to_all.is_(True))
 
         rows = rows_query.order_by(FieldReport.created_at.desc(), FieldReport.id.desc()).all()
