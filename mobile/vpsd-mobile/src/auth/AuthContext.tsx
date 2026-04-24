@@ -9,6 +9,7 @@ type User = {
   email: string;
   role: string;
   is_active: boolean;
+  must_reset_password?: boolean;
 };
 
 type AuthContextType = {
@@ -16,7 +17,9 @@ type AuthContextType = {
   token: string | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  mustResetPassword: boolean;
   login: (email: string, password: string) => Promise<void>;
+  completePasswordReset: (user: User) => void;
   logout: () => Promise<void>;
 };
 
@@ -26,6 +29,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setTokenState] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const mustResetPassword = !!user?.must_reset_password;
 
   // Load token on mount
   useEffect(() => {
@@ -142,10 +146,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const completePasswordReset = (nextUser: User) => {
+    setUser(nextUser);
+  };
+
   const isAuthenticated = !!token;
 
   return (
-    <AuthContext.Provider value={{ user, token, isLoading, isAuthenticated, login, logout }}>
+    <AuthContext.Provider value={{ user, token, isLoading, isAuthenticated, mustResetPassword, login, completePasswordReset, logout }}>
       {children}
     </AuthContext.Provider>
   );

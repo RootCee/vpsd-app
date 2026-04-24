@@ -1,9 +1,9 @@
-import { Redirect } from "expo-router";
+import { type Href, Redirect } from "expo-router";
 import { View, ActivityIndicator } from "react-native";
 import { useAuth } from "../src/auth/AuthContext";
 
 export default function Index() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, mustResetPassword } = useAuth();
 
   if (__DEV__) {
     console.log("[index.tsx] Root Index Render:");
@@ -24,7 +24,9 @@ export default function Index() {
   }
 
   // Redirect based on authentication status
-  const destination = isAuthenticated ? "/(tabs)/hotspots" : "/login";
+  const destination = (
+    !isAuthenticated ? "/login" : mustResetPassword ? "/change-password" : "/(tabs)/hotspots"
+  ) as Href;
   if (__DEV__) {
     console.log("[index.tsx] Redirecting to:", destination);
   }

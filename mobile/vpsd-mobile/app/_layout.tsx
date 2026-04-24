@@ -1,5 +1,5 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Slot, useRouter, useSegments } from 'expo-router';
+import { type Href, Slot, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
@@ -13,7 +13,7 @@ import { AuthProvider, useAuth } from '../src/auth/AuthContext';
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
-  const { isAuthenticated, isLoading, logout } = useAuth();
+  const { isAuthenticated, isLoading, mustResetPassword, logout } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
@@ -28,31 +28,41 @@ function RootLayoutNav() {
   useEffect(() => {
     if (isLoading) return;
 
-    const inAuthGroup = segments[0] === 'login';
+    const currentSegment = segments[0] as string | undefined;
+    const onLogin = currentSegment === 'login';
+    const onChangePassword = currentSegment === 'change-password';
 
     if (__DEV__) {
       console.log('[_layout.tsx] Auth Guard Check:');
       console.log('  - segments:', segments);
       console.log('  - isAuthenticated:', isAuthenticated);
-      console.log('  - inAuthGroup:', inAuthGroup);
+      console.log('  - mustResetPassword:', mustResetPassword);
+      console.log('  - onLogin:', onLogin);
+      console.log('  - onChangePassword:', onChangePassword);
       console.log('  - isLoading:', isLoading);
     }
 
     // CRITICAL: Redirect unauthenticated users away from protected routes
-    if (!isAuthenticated && !inAuthGroup) {
+    if (!isAuthenticated && !onLogin) {
       if (__DEV__) {
         console.log('[_layout.tsx] ❌ Not authenticated, redirecting to /login');
       }
-      router.replace('/login');
+      router.replace('/login' as Href);
+    }
+    else if (isAuthenticated && mustResetPassword && !onChangePassword) {
+      if (__DEV__) {
+        console.log('[_layout.tsx] 🔐 Password reset required, redirecting to /change-password');
+      }
+      router.replace('/change-password' as Href);
     }
     // Redirect authenticated users away from auth screens
-    else if (isAuthenticated && inAuthGroup) {
+    else if (isAuthenticated && !mustResetPassword && (onLogin || onChangePassword)) {
       if (__DEV__) {
         console.log('[_layout.tsx] ✅ Authenticated, redirecting to /(tabs)/hotspots');
       }
-      router.replace('/(tabs)/hotspots');
+      router.replace('/(tabs)/hotspots' as Href);
     }
-  }, [isAuthenticated, segments, isLoading]);
+  }, [isAuthenticated, mustResetPassword, segments, isLoading]);
 
   // Show loading screen while checking auth
   if (isLoading) {

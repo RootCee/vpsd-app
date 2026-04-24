@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import {
   Alert,
   FlatList,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,6 +17,35 @@ import { useAuth } from "../../src/auth/AuthContext";
 
 type Severity = "low" | "medium" | "high";
 
+type SharedUser = {
+  id: number;
+  name: string | null;
+  email: string | null;
+};
+
+type SharedGroup = {
+  id: number;
+  name: string;
+};
+
+type UserItem = {
+  id: number;
+  name: string | null;
+  email: string;
+  role: string;
+  is_active: boolean;
+  created_at: string;
+};
+
+type GroupItem = {
+  id: number;
+  name: string;
+  description?: string | null;
+  created_by_user_id: number;
+  created_at: string;
+  members: SharedUser[];
+};
+
 type FieldReport = {
   id: number;
   sender_user_id: number;
@@ -28,6 +58,9 @@ type FieldReport = {
   status: string;
   published_to_all?: boolean;
   published_by_user_id?: number | null;
+  visibility?: "private" | "shared" | "published";
+  shared_with_users?: SharedUser[];
+  shared_with_groups?: SharedGroup[];
   created_at: string;
   published_at?: string | null;
 };
@@ -42,6 +75,11 @@ export default function ReportsScreen() {
   const [locationText, setLocationText] = useState("");
   const [severity, setSeverity] = useState<Severity | null>(null);
   const [reports, setReports] = useState<FieldReport[]>([]);
+  const [users, setUsers] = useState<UserItem[]>([]);
+  const [groups, setGroups] = useState<GroupItem[]>([]);
+  const [sharingReport, setSharingReport] = useState<FieldReport | null>(null);
+  const [selectedUserIds, setSelectedUserIds] = useState<number[]>([]);
+  const [selectedGroupIds, setSelectedGroupIds] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [loadingInbox, setLoadingInbox] = useState(false);
 
@@ -53,13 +91,33 @@ export default function ReportsScreen() {
   };
 
   const loadReports = async () => {
+    const res = await authenticatedFetch(isAdmin ? "/field-reports/inbox" : "/field-reports");
+    const data = await parseApiResponse<{ reports?: FieldReport[] }>(res, "Unable to load field reports.");
+    setReports(Array.isArray(data.reports) ? data.reports : []);
+  };
+
+  const loadShareTargets = async () => {
+    if (!isAdmin) return;
+
+    const [usersRes, groupsRes] = await Promise.all([
+      authenticatedFetch("/auth/users"),
+      authenticatedFetch("/groups"),
+    ]);
+    const usersData = await parseApiResponse<{ users?: UserItem[] }>(usersRes, "Unable to load users.");
+    const groupsData = await parseApiResponse<{ groups?: GroupItem[] }>(groupsRes, "Unable to load groups.");
+    setUsers(Array.isArray(usersData.users) ? usersData.users : []);
+    setGroups(Array.isArray(groupsData.groups) ? groupsData.groups : []);
+  };
+
+  const refreshAll = async () => {
     setLoadingInbox(true);
     try {
-      const res = await authenticatedFetch(isAdmin ? "/field-reports/inbox" : "/field-reports");
-      const data = await parseApiResponse<{ reports?: FieldReport[] }>(res, "Unable to load field reports.");
-      setReports(Array.isArray(data.reports) ? data.reports : []);
+      await loadReports();
+      if (isAdmin) {
+        await loadShareTargets();
+      }
     } catch (e: any) {
-      Alert.alert("Inbox Unavailable", getErrorMessage(e, "Please try again."));
+      Alert.alert("Reports Unavailable", getErrorMessage(e, "Please try again."));
     } finally {
       setLoadingInbox(false);
     }
@@ -67,7 +125,7 @@ export default function ReportsScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
-      void loadReports();
+      void refreshAll();
     }, [isAdmin])
   );
 
@@ -94,7 +152,7 @@ export default function ReportsScreen() {
       await parseApiResponse(res, "Unable to send this field report.");
       resetForm();
       Alert.alert("Sent", "Your field report was sent to admin.");
-      await loadReports();
+      await refreshAll();
     } catch (e: any) {
       Alert.alert("Send Failed", getErrorMessage(e, "Please try again."));
     } finally {
@@ -109,7 +167,7 @@ export default function ReportsScreen() {
         method: "POST",
       });
       await parseApiResponse(res, "Unable to update this field report.");
-      await loadReports();
+      await refreshAll();
     } catch (e: any) {
       Alert.alert("Update Failed", getErrorMessage(e, "Please try again."));
       setLoadingInbox(false);
@@ -128,7 +186,7 @@ export default function ReportsScreen() {
               method: "POST",
             });
             await parseApiResponse(res, "Unable to publish this report.");
-            await loadReports();
+            await refreshAll();
           } catch (e: any) {
             Alert.alert("Publish Failed", getErrorMessage(e, "Please try again."));
             setLoadingInbox(false);
@@ -138,112 +196,243 @@ export default function ReportsScreen() {
     ]);
   };
 
+  const openShareModal = (report: FieldReport) => {
+    setSharingReport(report);
+    setSelectedUserIds((report.shared_with_users || []).map((item) => item.id));
+    setSelectedGroupIds((report.shared_with_groups || []).map((item) => item.id));
+  };
+
+  const toggleId = (value: number, current: number[], setCurrent: (next: number[]) => void) => {
+    setCurrent(current.includes(value) ? current.filter((id) => id !== value) : [...current, value]);
+  };
+
+  const saveShareTargets = async () => {
+    if (!sharingReport) return;
+    if (!selectedUserIds.length && !selectedGroupIds.length) {
+      Alert.alert("Nothing Selected", "Choose at least one user or group.");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const res = await authenticatedFetch(`/field-reports/${sharingReport.id}/share`, {
+        method: "POST",
+        body: JSON.stringify({
+          user_ids: selectedUserIds,
+          group_ids: selectedGroupIds,
+        }),
+      });
+      await parseApiResponse(res, "Unable to share this report.");
+      setSharingReport(null);
+      await refreshAll();
+    } catch (e: any) {
+      Alert.alert("Share Failed", getErrorMessage(e, "Please try again."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const getVisibilityLabel = (item: FieldReport) => {
+    if (item.published_to_all || item.visibility === "published") return "Published";
+    if ((item.shared_with_users || []).length || (item.shared_with_groups || []).length || item.visibility === "shared") {
+      return "Shared";
+    }
+    return "Private";
+  };
+
+  const getShareSummary = (item: FieldReport) => {
+    const usersCount = (item.shared_with_users || []).length;
+    const groupsCount = (item.shared_with_groups || []).length;
+    if (!usersCount && !groupsCount) return null;
+
+    const parts = [];
+    if (usersCount) parts.push(`${usersCount} user${usersCount === 1 ? "" : "s"}`);
+    if (groupsCount) parts.push(`${groupsCount} group${groupsCount === 1 ? "" : "s"}`);
+    return `Shared with ${parts.join(" and ")}`;
+  };
+
   return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Field Reports</Text>
-      <Text style={styles.helper}>Field Reports are internal messages only. For emergencies, call 911.</Text>
+    <>
+      <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+        <Text style={styles.title}>Field Reports</Text>
+        <Text style={styles.helper}>Field Reports are internal messages only. For emergencies, call 911.</Text>
 
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>Send Report</Text>
+        <View style={styles.card}>
+          <Text style={styles.sectionTitle}>Send Report</Text>
 
-        <Text style={styles.label}>Title</Text>
-        <TextInput
-          style={styles.input}
-          value={title}
-          onChangeText={setTitle}
-          placeholder="Suspicious activity near outreach site"
-          placeholderTextColor="#666"
-        />
+          <Text style={styles.label}>Title</Text>
+          <TextInput
+            style={styles.input}
+            value={title}
+            onChangeText={setTitle}
+            placeholder="Suspicious activity near outreach site"
+            placeholderTextColor="#666"
+          />
 
-        <Text style={styles.label}>Message</Text>
-        <TextInput
-          style={[styles.input, styles.textarea]}
-          value={message}
-          onChangeText={setMessage}
-          placeholder="Share what happened and any follow-up needed."
-          placeholderTextColor="#666"
-          multiline
-        />
+          <Text style={styles.label}>Message</Text>
+          <TextInput
+            style={[styles.input, styles.textarea]}
+            value={message}
+            onChangeText={setMessage}
+            placeholder="Share what happened and any follow-up needed."
+            placeholderTextColor="#666"
+            multiline
+          />
 
-        <Text style={styles.label}>Location (optional)</Text>
-        <TextInput
-          style={styles.input}
-          value={locationText}
-          onChangeText={setLocationText}
-          placeholder="Broadway and 14th"
-          placeholderTextColor="#666"
-        />
+          <Text style={styles.label}>Location (optional)</Text>
+          <TextInput
+            style={styles.input}
+            value={locationText}
+            onChangeText={setLocationText}
+            placeholder="Broadway and 14th"
+            placeholderTextColor="#666"
+          />
 
-        <Text style={styles.label}>Severity (optional)</Text>
-        <View style={styles.severityRow}>
-          {(["low", "medium", "high"] as Severity[]).map((level) => (
-            <Pressable
-              key={level}
-              style={[styles.severityBtn, severity === level ? styles.severityBtnActive : null]}
-              onPress={() => setSeverity(level)}
-            >
-              <Text style={styles.severityBtnText}>{level}</Text>
-            </Pressable>
-          ))}
-        </View>
+          <Text style={styles.label}>Severity (optional)</Text>
+          <View style={styles.severityRow}>
+            {(["low", "medium", "high"] as Severity[]).map((level) => (
+              <Pressable
+                key={level}
+                style={[styles.severityBtn, severity === level ? styles.severityBtnActive : null]}
+                onPress={() => setSeverity(level)}
+              >
+                <Text style={styles.severityBtnText}>{level}</Text>
+              </Pressable>
+            ))}
+          </View>
 
-        <Pressable style={[styles.submitBtn, saving ? styles.submitBtnDisabled : null]} onPress={submitReport} disabled={saving}>
-          <Text style={styles.submitBtnText}>{saving ? "Sending..." : "Send Report"}</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.card}>
-        <View style={styles.inboxHeader}>
-          <Text style={styles.sectionTitle}>{isAdmin ? "Inbox" : isPolice ? "My & Published Reports" : "Published Reports"}</Text>
-          <Pressable style={styles.refreshBtn} onPress={loadReports} disabled={loadingInbox}>
-            <Text style={styles.refreshBtnText}>{loadingInbox ? "..." : "Refresh"}</Text>
+          <Pressable style={[styles.submitBtn, saving ? styles.submitBtnDisabled : null]} onPress={submitReport} disabled={saving}>
+            <Text style={styles.submitBtnText}>{saving ? "Sending..." : "Send Report"}</Text>
           </Pressable>
         </View>
 
-        <FlatList
-          data={reports}
-          keyExtractor={(item) => String(item.id)}
-          scrollEnabled={false}
-          contentContainerStyle={styles.listContent}
-          ListEmptyComponent={<Text style={styles.helper}>No field reports yet.</Text>}
-          renderItem={({ item }) => (
-            <View style={styles.reportCard}>
-              <View style={styles.reportHeader}>
-                <Text style={styles.reportTitle}>{item.title}</Text>
-                <Text style={[styles.statusPill, item.status === "reviewed" ? styles.statusReviewed : styles.statusNew]}>
-                  {item.status}
-                </Text>
-              </View>
-              <Text style={item.published_to_all ? styles.visibilityPublished : styles.visibilityPrivate}>
-                {item.published_to_all ? "Published" : "Private"}
-              </Text>
-              <Text style={styles.reportMeta}>
-                {item.sender_name || "Unnamed User"} • {item.sender_email || "Unknown"}
-              </Text>
-              <Text style={styles.reportMeta}>{new Date(item.created_at).toLocaleString()}</Text>
-              {item.severity ? <Text style={styles.reportMeta}>Severity: {item.severity}</Text> : null}
-              {item.location_text ? <Text style={styles.reportMeta}>Location: {item.location_text}</Text> : null}
-              <Text style={styles.reportMessage}>{item.message}</Text>
+        <View style={styles.card}>
+          <View style={styles.inboxHeader}>
+            <Text style={styles.sectionTitle}>{isAdmin ? "Inbox" : isPolice ? "My, Shared & Published Reports" : "Shared & Published Reports"}</Text>
+            <Pressable style={styles.refreshBtn} onPress={refreshAll} disabled={loadingInbox}>
+              <Text style={styles.refreshBtnText}>{loadingInbox ? "..." : "Refresh"}</Text>
+            </Pressable>
+          </View>
 
-              {isAdmin ? (
-                <View style={styles.reportActions}>
-                  {item.status !== "reviewed" ? (
-                    <Pressable style={styles.reviewBtn} onPress={() => markReviewed(item.id)} disabled={loadingInbox}>
-                      <Text style={styles.reviewBtnText}>Mark Reviewed</Text>
-                    </Pressable>
-                  ) : null}
-                  {!item.published_to_all ? (
-                    <Pressable style={styles.publishBtn} onPress={() => publishReport(item.id)} disabled={loadingInbox}>
-                      <Text style={styles.publishBtnText}>Publish</Text>
-                    </Pressable>
-                  ) : null}
+          <FlatList
+            data={reports}
+            keyExtractor={(item) => String(item.id)}
+            scrollEnabled={false}
+            contentContainerStyle={styles.listContent}
+            ListEmptyComponent={<Text style={styles.helper}>No field reports yet.</Text>}
+            renderItem={({ item }) => (
+              <View style={styles.reportCard}>
+                <View style={styles.reportHeader}>
+                  <Text style={styles.reportTitle}>{item.title}</Text>
+                  <Text style={[styles.statusPill, item.status === "reviewed" ? styles.statusReviewed : styles.statusNew]}>
+                    {item.status}
+                  </Text>
                 </View>
-              ) : null}
+                <Text
+                  style={
+                    getVisibilityLabel(item) === "Published"
+                      ? styles.visibilityPublished
+                      : getVisibilityLabel(item) === "Shared"
+                        ? styles.visibilityShared
+                        : styles.visibilityPrivate
+                  }
+                >
+                  {getVisibilityLabel(item)}
+                </Text>
+                <Text style={styles.reportMeta}>
+                  {item.sender_name || "Unnamed User"} • {item.sender_email || "Unknown"}
+                </Text>
+                <Text style={styles.reportMeta}>{new Date(item.created_at).toLocaleString()}</Text>
+                {item.severity ? <Text style={styles.reportMeta}>Severity: {item.severity}</Text> : null}
+                {item.location_text ? <Text style={styles.reportMeta}>Location: {item.location_text}</Text> : null}
+                {getShareSummary(item) ? <Text style={styles.reportMeta}>{getShareSummary(item)}</Text> : null}
+                {(item.shared_with_groups || []).length ? (
+                  <Text style={styles.reportMeta}>
+                    Groups: {(item.shared_with_groups || []).map((group) => group.name).join(", ")}
+                  </Text>
+                ) : null}
+                {(item.shared_with_users || []).length ? (
+                  <Text style={styles.reportMeta}>
+                    Users: {(item.shared_with_users || []).map((person) => person.name || person.email || `User ${person.id}`).join(", ")}
+                  </Text>
+                ) : null}
+                <Text style={styles.reportMessage}>{item.message}</Text>
+
+                {isAdmin ? (
+                  <View style={styles.reportActions}>
+                    {item.status !== "reviewed" ? (
+                      <Pressable style={styles.reviewBtn} onPress={() => markReviewed(item.id)} disabled={loadingInbox}>
+                        <Text style={styles.reviewBtnText}>Mark Reviewed</Text>
+                      </Pressable>
+                    ) : null}
+                    {!item.published_to_all ? (
+                      <Pressable style={styles.publishBtn} onPress={() => publishReport(item.id)} disabled={loadingInbox}>
+                        <Text style={styles.publishBtnText}>Publish</Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable style={styles.shareBtn} onPress={() => openShareModal(item)} disabled={loadingInbox}>
+                      <Text style={styles.shareBtnText}>Share</Text>
+                    </Pressable>
+                  </View>
+                ) : null}
+              </View>
+            )}
+          />
+        </View>
+      </ScrollView>
+
+      <Modal visible={!!sharingReport} animationType="slide" transparent onRequestClose={() => setSharingReport(null)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.sectionTitle}>Share Report</Text>
+            <Text style={styles.helper}>{sharingReport?.title || "Select who should receive this report."}</Text>
+
+            <Text style={styles.label}>Users</Text>
+            <ScrollView style={styles.modalList}>
+              {users.map((item) => {
+                const checked = selectedUserIds.includes(item.id);
+                return (
+                  <Pressable
+                    key={`share-user-${item.id}`}
+                    style={[styles.shareTargetRow, checked ? styles.shareTargetRowActive : null]}
+                    onPress={() => toggleId(item.id, selectedUserIds, setSelectedUserIds)}
+                  >
+                    <Text style={styles.shareTargetText}>{item.name || item.email}</Text>
+                    <Text style={styles.shareTargetMeta}>{checked ? "Selected" : item.email}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <Text style={styles.label}>Groups</Text>
+            <ScrollView style={styles.modalList}>
+              {groups.map((group) => {
+                const checked = selectedGroupIds.includes(group.id);
+                return (
+                  <Pressable
+                    key={`share-group-${group.id}`}
+                    style={[styles.shareTargetRow, checked ? styles.shareTargetRowActive : null]}
+                    onPress={() => toggleId(group.id, selectedGroupIds, setSelectedGroupIds)}
+                  >
+                    <Text style={styles.shareTargetText}>{group.name}</Text>
+                    <Text style={styles.shareTargetMeta}>{checked ? "Selected" : `${group.members.length} members`}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable style={styles.modalCancelBtn} onPress={() => setSharingReport(null)} disabled={saving}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={styles.modalSaveBtn} onPress={saveShareTargets} disabled={saving}>
+                <Text style={styles.modalSaveText}>{saving ? "Saving..." : "Save Share"}</Text>
+              </Pressable>
             </View>
-          )}
-        />
-      </View>
-    </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -398,6 +587,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
   },
+  visibilityShared: {
+    color: "#93c5fd",
+    fontSize: 12,
+    fontWeight: "800",
+  },
   visibilityPublished: {
     color: "#86efac",
     fontSize: 12,
@@ -413,6 +607,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
     marginTop: 6,
+    flexWrap: "wrap",
   },
   reviewBtn: {
     alignSelf: "flex-start",
@@ -433,6 +628,83 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   publishBtnText: {
+    color: "#fff",
+    fontWeight: "800",
+  },
+  shareBtn: {
+    alignSelf: "flex-start",
+    backgroundColor: "#7c3aed",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  shareBtnText: {
+    color: "#fff",
+    fontWeight: "800",
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.65)",
+    justifyContent: "center",
+    padding: 20,
+  },
+  modalCard: {
+    backgroundColor: "#0f0f0f",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#202020",
+    padding: 16,
+    gap: 12,
+    maxHeight: "85%",
+  },
+  modalList: {
+    maxHeight: 160,
+  },
+  shareTargetRow: {
+    backgroundColor: "#111",
+    borderColor: "#232323",
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 8,
+    gap: 4,
+  },
+  shareTargetRowActive: {
+    borderColor: "#0b3d91",
+    backgroundColor: "#102347",
+  },
+  shareTargetText: {
+    color: "#fff",
+    fontWeight: "800",
+  },
+  shareTargetMeta: {
+    color: "#9aa0a6",
+    fontSize: 12,
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 10,
+    marginTop: 8,
+  },
+  modalCancelBtn: {
+    borderWidth: 1,
+    borderColor: "#333",
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  modalCancelText: {
+    color: "#fff",
+    fontWeight: "700",
+  },
+  modalSaveBtn: {
+    backgroundColor: "#0b3d91",
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  modalSaveText: {
     color: "#fff",
     fontWeight: "800",
   },

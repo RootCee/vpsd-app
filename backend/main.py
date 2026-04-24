@@ -7,10 +7,21 @@ import httpx
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, inspect, text
+from sqlalchemy import func, inspect, or_, text
 
 from db import SessionLocal, engine, Base
-from models import Incident, HotspotCell, Client, ContactLog, ContactLogShare, FieldReport, User
+from models import (
+    Incident,
+    HotspotCell,
+    Client,
+    ContactLog,
+    ContactLogShare,
+    FieldReport,
+    FieldReportShare,
+    Group,
+    GroupMember,
+    User,
+)
 from auth import hash_password, verify_password, create_access_token, get_current_user
 
 # ArcGIS FeatureServer for SDPD NIBRS (City of San Diego hosted)
@@ -86,6 +97,21 @@ def _ensure_field_report_columns() -> None:
                 conn.execute(text(f"ALTER TABLE field_reports ADD COLUMN {name} {column_type}"))
 
 
+def _ensure_user_columns() -> None:
+    inspector = inspect(engine)
+    if "users" not in inspector.get_table_names():
+        return
+
+    existing = {col["name"] for col in inspector.get_columns("users")}
+    needed = {
+        "must_reset_password": "BOOLEAN DEFAULT 0",
+    }
+    with engine.begin() as conn:
+        for name, column_type in needed.items():
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {name} {column_type}"))
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -122,6 +148,11 @@ class UsersListResponse(BaseModel):
     users: list[UserResponse]
 
 
+class ChangePasswordPayload(BaseModel):
+    current_password: str = Field(min_length=1, max_length=255)
+    new_password: str = Field(min_length=6, max_length=255)
+
+
 class ShareContactLogPayload(BaseModel):
     user_ids: list[int] = Field(default_factory=list)
 
@@ -131,6 +162,20 @@ class CreateFieldReportPayload(BaseModel):
     message: str = Field(min_length=1, max_length=5000)
     location_text: Optional[str] = Field(default=None, max_length=255)
     severity: Optional[str] = Field(default=None)
+
+
+class CreateGroupPayload(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=2000)
+
+
+class GroupMembersPayload(BaseModel):
+    user_ids: list[int] = Field(default_factory=list)
+
+
+class ShareFieldReportPayload(BaseModel):
+    user_ids: list[int] = Field(default_factory=list)
+    group_ids: list[int] = Field(default_factory=list)
 
 
 def _upsert_bootstrap_user(
@@ -169,12 +214,14 @@ def _upsert_bootstrap_user(
                 name=name or None,
                 role=role,
                 is_active=True,
+                must_reset_password=False,
             )
             db.add(user)
         else:
             user.hashed_password = hash_password(password)
             user.role = role
             user.is_active = True
+            user.must_reset_password = False
             if name:
                 user.name = name
 
@@ -227,6 +274,7 @@ def on_startup():
     _ensure_contact_log_columns()
     _ensure_client_columns()
     _ensure_field_report_columns()
+    _ensure_user_columns()
     _sync_bootstrap_users()
 
 
@@ -253,6 +301,7 @@ def admin_init():
     _ensure_contact_log_columns()
     _ensure_client_columns()
     _ensure_field_report_columns()
+    _ensure_user_columns()
     bootstrap = _sync_bootstrap_users()
     return {"status": "initialized", "users": bootstrap}
 
@@ -297,7 +346,14 @@ def create_user(payload: CreateUserPayload, current_user: User = Depends(get_cur
             raise HTTPException(400, "That email is already registered.")
 
         hashed_pwd = hash_password(password)
-        user = User(email=email, hashed_password=hashed_pwd, name=name, role=role, is_active=True)
+        user = User(
+            email=email,
+            hashed_password=hashed_pwd,
+            name=name,
+            role=role,
+            is_active=True,
+            must_reset_password=True,
+        )
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -334,6 +390,7 @@ def reset_password(payload: ResetPasswordPayload, current_user: User = Depends(g
             raise HTTPException(404, "User not found.")
 
         user.hashed_password = hash_password(new_password)
+        user.must_reset_password = True
         db.commit()
 
         return {"success": True, "message": "Password reset successful."}
@@ -342,6 +399,48 @@ def reset_password(payload: ResetPasswordPayload, current_user: User = Depends(g
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Unable to reset password: {e}")
+    finally:
+        db.close()
+
+
+@app.post("/auth/change-password")
+def change_password(payload: ChangePasswordPayload, current_user: User = Depends(get_current_user)):
+    current_password = payload.current_password.strip()
+    new_password = payload.new_password.strip()
+
+    if not current_password or not new_password:
+        raise HTTPException(400, "Current password and new password are required.")
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == current_user.id).first()
+        if not user:
+            raise HTTPException(404, "User not found.")
+
+        if not verify_password(current_password, user.hashed_password):
+            raise HTTPException(401, "Current password is incorrect.")
+
+        user.hashed_password = hash_password(new_password)
+        user.must_reset_password = False
+        db.commit()
+        db.refresh(user)
+
+        return {
+            "success": True,
+            "user": {
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+                "role": (user.role or "").strip().lower(),
+                "is_active": user.is_active,
+                "must_reset_password": bool(user.must_reset_password),
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Unable to change password: {e}")
     finally:
         db.close()
 
@@ -371,6 +470,7 @@ def auth_me(current_user: User = Depends(get_current_user)):
             "email": current_user.email,
             "role": (current_user.role or "").strip().lower(),
             "is_active": current_user.is_active,
+            "must_reset_password": bool(current_user.must_reset_password),
         }
     }
 
@@ -407,6 +507,7 @@ def login(payload: dict):
                 "email": user.email,
                 "role": (user.role or "").strip().lower(),
                 "is_active": user.is_active,
+                "must_reset_password": bool(user.must_reset_password),
             }
         }
 
@@ -414,6 +515,175 @@ def login(payload: dict):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"login failed: {e}")
+    finally:
+        db.close()
+
+
+# ---------------------------
+# GROUPS
+# ---------------------------
+@app.post("/groups")
+def create_group(payload: CreateGroupPayload, current_user: User = Depends(get_current_user)):
+    if not _is_admin(current_user):
+        raise HTTPException(403, "Admin access required")
+
+    name = payload.name.strip()
+    description = payload.description.strip() if payload.description else None
+    if not name:
+        raise HTTPException(400, "Group name is required.")
+
+    db = SessionLocal()
+    try:
+        group = Group(
+            name=name,
+            description=description or None,
+            created_by_user_id=current_user.id,
+        )
+        db.add(group)
+        db.commit()
+        db.refresh(group)
+        return {
+            "group": {
+                "id": group.id,
+                "name": group.name,
+                "description": group.description,
+                "created_by_user_id": group.created_by_user_id,
+                "created_at": group.created_at.isoformat() if group.created_at else None,
+                "members": [],
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"create_group failed: {e}")
+    finally:
+        db.close()
+
+
+@app.get("/groups")
+def list_groups(current_user: User = Depends(get_current_user)):
+    if not _is_admin(current_user):
+        raise HTTPException(403, "Admin access required")
+
+    db = SessionLocal()
+    try:
+        groups = db.query(Group).order_by(func.lower(Group.name), Group.id.asc()).all()
+        group_ids = [group.id for group in groups]
+        members = (
+            db.query(GroupMember)
+            .filter(GroupMember.group_id.in_(group_ids))
+            .order_by(GroupMember.group_id.asc(), GroupMember.id.asc())
+            .all()
+            if group_ids
+            else []
+        )
+        members_by_group: dict[int, list[GroupMember]] = {}
+        user_ids = {member.user_id for member in members}
+        for member in members:
+            members_by_group.setdefault(member.group_id, []).append(member)
+        users_by_id = {
+            user.id: user
+            for user in db.query(User).filter(User.id.in_(user_ids)).all()
+        } if user_ids else {}
+        return {
+            "groups": [
+                _serialize_group(group, members_by_group.get(group.id, []), users_by_id)
+                for group in groups
+            ]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"list_groups failed: {e}")
+    finally:
+        db.close()
+
+
+@app.post("/groups/{group_id}/members")
+def add_group_members(group_id: int, payload: GroupMembersPayload, current_user: User = Depends(get_current_user)):
+    if not _is_admin(current_user):
+        raise HTTPException(403, "Admin access required")
+
+    requested_user_ids = list(dict.fromkeys(payload.user_ids))
+    if not requested_user_ids:
+        raise HTTPException(400, "At least one user_id is required.")
+
+    db = SessionLocal()
+    try:
+        group = db.query(Group).filter(Group.id == group_id).first()
+        if not group:
+            raise HTTPException(404, "Group not found")
+
+        users = (
+            db.query(User)
+            .filter(User.id.in_(requested_user_ids), User.is_active.is_(True))
+            .all()
+        )
+        valid_user_ids = {user.id for user in users}
+        if not valid_user_ids:
+            raise HTTPException(400, "No valid users selected.")
+
+        existing = (
+            db.query(GroupMember)
+            .filter(GroupMember.group_id == group_id, GroupMember.user_id.in_(valid_user_ids))
+            .all()
+        )
+        existing_ids = {member.user_id for member in existing}
+
+        for user_id in valid_user_ids:
+            if user_id in existing_ids:
+                continue
+            db.add(GroupMember(group_id=group_id, user_id=user_id))
+
+        db.commit()
+        all_members = (
+            db.query(GroupMember)
+            .filter(GroupMember.group_id == group_id)
+            .order_by(GroupMember.id.asc())
+            .all()
+        )
+        users_by_id = {
+            user.id: user
+            for user in db.query(User).filter(User.id.in_({member.user_id for member in all_members})).all()
+        } if all_members else {}
+        return {"group": _serialize_group(group, all_members, users_by_id)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"add_group_members failed: {e}")
+    finally:
+        db.close()
+
+
+@app.delete("/groups/{group_id}/members/{user_id}")
+def remove_group_member(group_id: int, user_id: int, current_user: User = Depends(get_current_user)):
+    if not _is_admin(current_user):
+        raise HTTPException(403, "Admin access required")
+
+    db = SessionLocal()
+    try:
+        group = db.query(Group).filter(Group.id == group_id).first()
+        if not group:
+            raise HTTPException(404, "Group not found")
+
+        member = (
+            db.query(GroupMember)
+            .filter(GroupMember.group_id == group_id, GroupMember.user_id == user_id)
+            .first()
+        )
+        if not member:
+            raise HTTPException(404, "Group member not found")
+
+        db.delete(member)
+        db.commit()
+        return {"success": True, "group_id": group_id, "user_id": user_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"remove_group_member failed: {e}")
     finally:
         db.close()
 
@@ -660,7 +930,40 @@ def _can_share_contact_log(contact_log: ContactLog, current_user: User) -> bool:
     )
 
 
-def _serialize_field_report(report: FieldReport, sender: User | None):
+def _get_user_group_ids(db, user_id: int) -> list[int]:
+    rows = db.query(GroupMember.group_id).filter(GroupMember.user_id == user_id).all()
+    return [group_id for group_id, in rows]
+
+
+def _serialize_group(group: Group, members: list[GroupMember], users_by_id: dict[int, User]):
+    return {
+        "id": group.id,
+        "name": group.name,
+        "description": group.description,
+        "created_by_user_id": group.created_by_user_id,
+        "created_at": group.created_at.isoformat() if group.created_at else None,
+        "members": [
+            {
+                "id": member.user_id,
+                "name": (users_by_id.get(member.user_id).name if users_by_id.get(member.user_id) else None),
+                "email": (users_by_id.get(member.user_id).email if users_by_id.get(member.user_id) else None),
+            }
+            for member in members
+            if users_by_id.get(member.user_id)
+        ],
+    }
+
+
+def _serialize_field_report(
+    report: FieldReport,
+    sender: User | None,
+    *,
+    shared_with_users: Optional[list[dict[str, object]]] = None,
+    shared_with_groups: Optional[list[dict[str, object]]] = None,
+):
+    share_users = shared_with_users or []
+    share_groups = shared_with_groups or []
+    is_shared = bool(share_users or share_groups)
     return {
         "id": report.id,
         "sender_user_id": report.sender_user_id,
@@ -673,6 +976,9 @@ def _serialize_field_report(report: FieldReport, sender: User | None):
         "status": report.status,
         "published_to_all": bool(report.published_to_all),
         "published_by_user_id": report.published_by_user_id,
+        "visibility": "published" if report.published_to_all else "shared" if is_shared else "private",
+        "shared_with_users": share_users,
+        "shared_with_groups": share_groups,
         "created_at": report.created_at.isoformat() if report.created_at else None,
         "published_at": report.published_at.isoformat() if report.published_at else None,
     }
@@ -696,6 +1002,57 @@ def serialize_client(c: Client, current_user: Optional[User] = None):
         "home_lat": c.home_lat,
         "home_lon": c.home_lon,
     }
+
+
+def _serialize_field_reports_for_rows(db, rows: list[tuple[FieldReport, User]]):
+    report_ids = [report.id for report, _ in rows]
+    share_rows = (
+        db.query(FieldReportShare)
+        .filter(FieldReportShare.field_report_id.in_(report_ids))
+        .order_by(FieldReportShare.id.asc())
+        .all()
+        if report_ids
+        else []
+    )
+    shares_by_report: dict[int, list[FieldReportShare]] = {}
+    shared_user_ids: set[int] = set()
+    shared_group_ids: set[int] = set()
+    for share in share_rows:
+        shares_by_report.setdefault(share.field_report_id, []).append(share)
+        if share.shared_with_user_id is not None:
+            shared_user_ids.add(share.shared_with_user_id)
+        if share.shared_with_group_id is not None:
+            shared_group_ids.add(share.shared_with_group_id)
+
+    shared_users = {
+        user.id: {"id": user.id, "name": user.name, "email": user.email}
+        for user in db.query(User).filter(User.id.in_(shared_user_ids)).all()
+    } if shared_user_ids else {}
+    shared_groups = {
+        group.id: {"id": group.id, "name": group.name}
+        for group in db.query(Group).filter(Group.id.in_(shared_group_ids)).all()
+    } if shared_group_ids else {}
+
+    serialized = []
+    for report, sender in rows:
+        report_shares = shares_by_report.get(report.id, [])
+        serialized.append(
+            _serialize_field_report(
+                report,
+                sender,
+                shared_with_users=[
+                    shared_users[share.shared_with_user_id]
+                    for share in report_shares
+                    if share.shared_with_user_id in shared_users
+                ],
+                shared_with_groups=[
+                    shared_groups[share.shared_with_group_id]
+                    for share in report_shares
+                    if share.shared_with_group_id in shared_groups
+                ],
+            )
+        )
+    return serialized
 
 
 @app.post("/triage/clients")
@@ -1054,7 +1411,7 @@ def field_reports_inbox(current_user: User = Depends(get_current_user)):
             .order_by(FieldReport.created_at.desc(), FieldReport.id.desc())
             .all()
         )
-        return {"reports": [_serialize_field_report(report, sender) for report, sender in rows]}
+        return {"reports": _serialize_field_reports_for_rows(db, rows)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"field_reports_inbox failed: {e}")
     finally:
@@ -1068,16 +1425,29 @@ def field_reports(current_user: User = Depends(get_current_user)):
         rows_query = db.query(FieldReport, User).join(User, User.id == FieldReport.sender_user_id)
         if _is_admin(current_user):
             pass
-        elif (current_user.role or "").strip().lower() == "police":
-            rows_query = rows_query.filter(
-                (FieldReport.sender_user_id == current_user.id)
-                | (FieldReport.published_to_all.is_(True))
-            )
         else:
-            rows_query = rows_query.filter(FieldReport.published_to_all.is_(True))
+            shared_report_ids = (
+                db.query(FieldReportShare.field_report_id)
+                .filter(FieldReportShare.shared_with_user_id == current_user.id)
+            )
+            group_ids = _get_user_group_ids(db, current_user.id)
+            if group_ids:
+                shared_report_ids = shared_report_ids.union(
+                    db.query(FieldReportShare.field_report_id).filter(FieldReportShare.shared_with_group_id.in_(group_ids))
+                )
+
+            visibility_filter = or_(
+                FieldReport.published_to_all.is_(True),
+                FieldReport.id.in_(shared_report_ids.subquery()),
+            )
+            if (current_user.role or "").strip().lower() == "police":
+                visibility_filter = or_(visibility_filter, FieldReport.sender_user_id == current_user.id)
+            rows_query = rows_query.filter(
+                visibility_filter
+            )
 
         rows = rows_query.order_by(FieldReport.created_at.desc(), FieldReport.id.desc()).all()
-        return {"reports": [_serialize_field_report(report, sender) for report, sender in rows]}
+        return {"reports": _serialize_field_reports_for_rows(db, rows)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"field_reports failed: {e}")
     finally:
@@ -1106,6 +1476,115 @@ def mark_field_report_reviewed(report_id: int, current_user: User = Depends(get_
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"mark_field_report_reviewed failed: {e}")
+    finally:
+        db.close()
+
+
+@app.post("/field-reports/{report_id}/share")
+def share_field_report(report_id: int, payload: ShareFieldReportPayload, current_user: User = Depends(get_current_user)):
+    if not _is_admin(current_user):
+        raise HTTPException(403, "Admin access required")
+
+    requested_user_ids = list(dict.fromkeys(payload.user_ids))
+    requested_group_ids = list(dict.fromkeys(payload.group_ids))
+    if not requested_user_ids and not requested_group_ids:
+        raise HTTPException(400, "At least one user_id or group_id is required.")
+
+    db = SessionLocal()
+    try:
+        report = db.query(FieldReport).filter(FieldReport.id == report_id).first()
+        if not report:
+            raise HTTPException(404, "Field report not found")
+
+        target_users = (
+            db.query(User)
+            .filter(User.id.in_(requested_user_ids), User.is_active.is_(True))
+            .all()
+            if requested_user_ids
+            else []
+        )
+        valid_user_ids = {user.id for user in target_users}
+        target_groups = (
+            db.query(Group)
+            .filter(Group.id.in_(requested_group_ids))
+            .all()
+            if requested_group_ids
+            else []
+        )
+        valid_group_ids = {group.id for group in target_groups}
+
+        if not valid_user_ids and not valid_group_ids:
+            raise HTTPException(400, "No valid users or groups selected.")
+
+        existing_shares = (
+            db.query(FieldReportShare)
+            .filter(FieldReportShare.field_report_id == report_id)
+            .all()
+        )
+        keep_pairs = {
+            ("user", user_id) for user_id in valid_user_ids
+        } | {
+            ("group", group_id) for group_id in valid_group_ids
+        }
+
+        existing_pairs = set()
+        for share in existing_shares:
+            pair = (
+                "user",
+                share.shared_with_user_id,
+            ) if share.shared_with_user_id is not None else (
+                "group",
+                share.shared_with_group_id,
+            )
+            if pair not in keep_pairs:
+                db.delete(share)
+            else:
+                existing_pairs.add(pair)
+
+        for user_id in valid_user_ids:
+            pair = ("user", user_id)
+            if pair in existing_pairs:
+                continue
+            db.add(
+                FieldReportShare(
+                    field_report_id=report_id,
+                    shared_with_user_id=user_id,
+                    created_by_user_id=current_user.id,
+                )
+            )
+
+        for group_id in valid_group_ids:
+            pair = ("group", group_id)
+            if pair in existing_pairs:
+                continue
+            db.add(
+                FieldReportShare(
+                    field_report_id=report_id,
+                    shared_with_group_id=group_id,
+                    created_by_user_id=current_user.id,
+                )
+            )
+
+        db.commit()
+
+        return {
+            "success": True,
+            "field_report_id": report_id,
+            "visibility": "shared",
+            "shared_with_users": [
+                {"id": user.id, "name": user.name, "email": user.email}
+                for user in target_users
+            ],
+            "shared_with_groups": [
+                {"id": group.id, "name": group.name}
+                for group in target_groups
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"share_field_report failed: {e}")
     finally:
         db.close()
 

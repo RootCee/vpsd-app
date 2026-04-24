@@ -14,6 +14,7 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     role = Column(String(32), nullable=False, default="member")
     is_active = Column(Boolean, nullable=False, default=True)
+    must_reset_password = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
@@ -106,3 +107,33 @@ class FieldReport(Base):
     published_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     published_at = Column(DateTime, nullable=True)
+
+
+class Group(Base):
+    __tablename__ = "groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class GroupMember(Base):
+    __tablename__ = "group_members"
+
+    id = Column(Integer, primary_key=True, index=True)
+    group_id = Column(Integer, ForeignKey("groups.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class FieldReportShare(Base):
+    __tablename__ = "field_report_shares"
+
+    id = Column(Integer, primary_key=True, index=True)
+    field_report_id = Column(Integer, ForeignKey("field_reports.id"), nullable=False, index=True)
+    shared_with_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    shared_with_group_id = Column(Integer, ForeignKey("groups.id"), nullable=True, index=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
