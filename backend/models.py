@@ -90,3 +90,17 @@ class ContactLogShare(Base):
     shared_with_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class FieldReport(Base):
+    __tablename__ = "field_reports"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sender_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    location_text = Column(String(255), nullable=True)
+    severity = Column(String(16), nullable=True)
+    status = Column(String(32), nullable=False, default="new")
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    published_at = Column(DateTime, nullable=True)

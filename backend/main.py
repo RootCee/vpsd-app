@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, inspect, text
 
 from db import SessionLocal, engine, Base
-from models import Incident, HotspotCell, Client, ContactLog, ContactLogShare, User
+from models import Incident, HotspotCell, Client, ContactLog, ContactLogShare, FieldReport, User
 from auth import hash_password, verify_password, create_access_token, get_current_user
 
 # ArcGIS FeatureServer for SDPD NIBRS (City of San Diego hosted)
@@ -108,6 +108,13 @@ class UsersListResponse(BaseModel):
 
 class ShareContactLogPayload(BaseModel):
     user_ids: list[int] = Field(default_factory=list)
+
+
+class CreateFieldReportPayload(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    message: str = Field(min_length=1, max_length=5000)
+    location_text: Optional[str] = Field(default=None, max_length=255)
+    severity: Optional[str] = Field(default=None)
 
 
 def _upsert_bootstrap_user(
@@ -635,6 +642,22 @@ def _can_share_contact_log(contact_log: ContactLog, current_user: User) -> bool:
     )
 
 
+def _serialize_field_report(report: FieldReport, sender: User | None):
+    return {
+        "id": report.id,
+        "sender_user_id": report.sender_user_id,
+        "sender_name": sender.name if sender else None,
+        "sender_email": sender.email if sender else None,
+        "title": report.title,
+        "message": report.message,
+        "location_text": report.location_text,
+        "severity": report.severity,
+        "status": report.status,
+        "created_at": report.created_at.isoformat() if report.created_at else None,
+        "published_at": report.published_at.isoformat() if report.published_at else None,
+    }
+
+
 def serialize_client(c: Client, current_user: Optional[User] = None):
     can_view_private_notes = current_user is None or _can_manage_client(c, current_user)
     return {
@@ -961,6 +984,85 @@ def share_contact_log(log_id: int, payload: ShareContactLogPayload, current_user
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"share_contact_log failed: {e}")
+    finally:
+        db.close()
+
+
+@app.post("/field-reports")
+def create_field_report(payload: CreateFieldReportPayload, current_user: User = Depends(get_current_user)):
+    title = payload.title.strip()
+    message = payload.message.strip()
+    location_text = payload.location_text.strip() if payload.location_text else None
+    severity = payload.severity.strip().lower() if payload.severity else None
+
+    if severity not in (None, "low", "medium", "high"):
+        raise HTTPException(400, "Severity must be low, medium, or high.")
+
+    db = SessionLocal()
+    try:
+        report = FieldReport(
+            sender_user_id=current_user.id,
+            title=title,
+            message=message,
+            location_text=location_text or None,
+            severity=severity,
+            status="new",
+        )
+        db.add(report)
+        db.commit()
+        db.refresh(report)
+        return {"report": _serialize_field_report(report, current_user)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"create_field_report failed: {e}")
+    finally:
+        db.close()
+
+
+@app.get("/field-reports/inbox")
+def field_reports_inbox(current_user: User = Depends(get_current_user)):
+    if not _is_admin(current_user):
+        raise HTTPException(403, "Admin access required")
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(FieldReport, User)
+            .join(User, User.id == FieldReport.sender_user_id)
+            .order_by(FieldReport.created_at.desc(), FieldReport.id.desc())
+            .all()
+        )
+        return {"reports": [_serialize_field_report(report, sender) for report, sender in rows]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"field_reports_inbox failed: {e}")
+    finally:
+        db.close()
+
+
+@app.post("/field-reports/{report_id}/mark-reviewed")
+def mark_field_report_reviewed(report_id: int, current_user: User = Depends(get_current_user)):
+    if not _is_admin(current_user):
+        raise HTTPException(403, "Admin access required")
+
+    db = SessionLocal()
+    try:
+        report = db.query(FieldReport).filter(FieldReport.id == report_id).first()
+        if not report:
+            raise HTTPException(404, "Field report not found")
+
+        report.status = "reviewed"
+        db.commit()
+        db.refresh(report)
+
+        sender = db.query(User).filter(User.id == report.sender_user_id).first()
+        return {"report": _serialize_field_report(report, sender)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"mark_field_report_reviewed failed: {e}")
     finally:
         db.close()
 
