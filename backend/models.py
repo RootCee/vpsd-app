@@ -102,5 +102,7 @@ class FieldReport(Base):
     location_text = Column(String(255), nullable=True)
     severity = Column(String(16), nullable=True)
     status = Column(String(32), nullable=False, default="new")
+    published_to_all = Column(Boolean, nullable=False, default=False)
+    published_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     published_at = Column(DateTime, nullable=True)

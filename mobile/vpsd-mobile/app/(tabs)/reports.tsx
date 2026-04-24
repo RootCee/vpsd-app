@@ -26,6 +26,8 @@ type FieldReport = {
   location_text?: string | null;
   severity?: Severity | null;
   status: string;
+  published_to_all?: boolean;
+  published_by_user_id?: number | null;
   created_at: string;
   published_at?: string | null;
 };
@@ -49,12 +51,10 @@ export default function ReportsScreen() {
     setSeverity(null);
   };
 
-  const loadInbox = async () => {
-    if (!isAdmin) return;
-
+  const loadReports = async () => {
     setLoadingInbox(true);
     try {
-      const res = await authenticatedFetch("/field-reports/inbox");
+      const res = await authenticatedFetch(isAdmin ? "/field-reports/inbox" : "/field-reports");
       const data = await parseApiResponse<{ reports?: FieldReport[] }>(res, "Unable to load field reports.");
       setReports(Array.isArray(data.reports) ? data.reports : []);
     } catch (e: any) {
@@ -66,7 +66,7 @@ export default function ReportsScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
-      void loadInbox();
+      void loadReports();
     }, [isAdmin])
   );
 
@@ -93,7 +93,7 @@ export default function ReportsScreen() {
       await parseApiResponse(res, "Unable to send this field report.");
       resetForm();
       Alert.alert("Sent", "Your field report was sent to admin.");
-      await loadInbox();
+      await loadReports();
     } catch (e: any) {
       Alert.alert("Send Failed", getErrorMessage(e, "Please try again."));
     } finally {
@@ -108,11 +108,33 @@ export default function ReportsScreen() {
         method: "POST",
       });
       await parseApiResponse(res, "Unable to update this field report.");
-      await loadInbox();
+      await loadReports();
     } catch (e: any) {
       Alert.alert("Update Failed", getErrorMessage(e, "Please try again."));
       setLoadingInbox(false);
     }
+  };
+
+  const publishReport = async (reportId: number) => {
+    Alert.alert("Publish Report", "Send this report to all users?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Publish",
+        onPress: async () => {
+          setLoadingInbox(true);
+          try {
+            const res = await authenticatedFetch(`/field-reports/${reportId}/publish`, {
+              method: "POST",
+            });
+            await parseApiResponse(res, "Unable to publish this report.");
+            await loadReports();
+          } catch (e: any) {
+            Alert.alert("Publish Failed", getErrorMessage(e, "Please try again."));
+            setLoadingInbox(false);
+          }
+        },
+      },
+    ]);
   };
 
   return (
@@ -169,47 +191,57 @@ export default function ReportsScreen() {
         </Pressable>
       </View>
 
-      {isAdmin ? (
-        <View style={styles.card}>
-          <View style={styles.inboxHeader}>
-            <Text style={styles.sectionTitle}>Inbox</Text>
-            <Pressable style={styles.refreshBtn} onPress={loadInbox} disabled={loadingInbox}>
-              <Text style={styles.refreshBtnText}>{loadingInbox ? "..." : "Refresh"}</Text>
-            </Pressable>
-          </View>
-
-          <FlatList
-            data={reports}
-            keyExtractor={(item) => String(item.id)}
-            scrollEnabled={false}
-            contentContainerStyle={styles.listContent}
-            ListEmptyComponent={<Text style={styles.helper}>No field reports yet.</Text>}
-            renderItem={({ item }) => (
-              <View style={styles.reportCard}>
-                <View style={styles.reportHeader}>
-                  <Text style={styles.reportTitle}>{item.title}</Text>
-                  <Text style={[styles.statusPill, item.status === "reviewed" ? styles.statusReviewed : styles.statusNew]}>
-                    {item.status}
-                  </Text>
-                </View>
-                <Text style={styles.reportMeta}>
-                  {item.sender_name || "Unnamed User"} • {item.sender_email || "Unknown"}
-                </Text>
-                <Text style={styles.reportMeta}>{new Date(item.created_at).toLocaleString()}</Text>
-                {item.severity ? <Text style={styles.reportMeta}>Severity: {item.severity}</Text> : null}
-                {item.location_text ? <Text style={styles.reportMeta}>Location: {item.location_text}</Text> : null}
-                <Text style={styles.reportMessage}>{item.message}</Text>
-
-                {item.status !== "reviewed" ? (
-                  <Pressable style={styles.reviewBtn} onPress={() => markReviewed(item.id)} disabled={loadingInbox}>
-                    <Text style={styles.reviewBtnText}>Mark Reviewed</Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            )}
-          />
+      <View style={styles.card}>
+        <View style={styles.inboxHeader}>
+          <Text style={styles.sectionTitle}>{isAdmin ? "Inbox" : "Published Reports"}</Text>
+          <Pressable style={styles.refreshBtn} onPress={loadReports} disabled={loadingInbox}>
+            <Text style={styles.refreshBtnText}>{loadingInbox ? "..." : "Refresh"}</Text>
+          </Pressable>
         </View>
-      ) : null}
+
+        <FlatList
+          data={reports}
+          keyExtractor={(item) => String(item.id)}
+          scrollEnabled={false}
+          contentContainerStyle={styles.listContent}
+          ListEmptyComponent={<Text style={styles.helper}>No field reports yet.</Text>}
+          renderItem={({ item }) => (
+            <View style={styles.reportCard}>
+              <View style={styles.reportHeader}>
+                <Text style={styles.reportTitle}>{item.title}</Text>
+                <Text style={[styles.statusPill, item.status === "reviewed" ? styles.statusReviewed : styles.statusNew]}>
+                  {item.status}
+                </Text>
+              </View>
+              <Text style={item.published_to_all ? styles.visibilityPublished : styles.visibilityPrivate}>
+                {item.published_to_all ? "Published" : "Private"}
+              </Text>
+              <Text style={styles.reportMeta}>
+                {item.sender_name || "Unnamed User"} • {item.sender_email || "Unknown"}
+              </Text>
+              <Text style={styles.reportMeta}>{new Date(item.created_at).toLocaleString()}</Text>
+              {item.severity ? <Text style={styles.reportMeta}>Severity: {item.severity}</Text> : null}
+              {item.location_text ? <Text style={styles.reportMeta}>Location: {item.location_text}</Text> : null}
+              <Text style={styles.reportMessage}>{item.message}</Text>
+
+              {isAdmin ? (
+                <View style={styles.reportActions}>
+                  {item.status !== "reviewed" ? (
+                    <Pressable style={styles.reviewBtn} onPress={() => markReviewed(item.id)} disabled={loadingInbox}>
+                      <Text style={styles.reviewBtnText}>Mark Reviewed</Text>
+                    </Pressable>
+                  ) : null}
+                  {!item.published_to_all ? (
+                    <Pressable style={styles.publishBtn} onPress={() => publishReport(item.id)} disabled={loadingInbox}>
+                      <Text style={styles.publishBtnText}>Publish</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
+          )}
+        />
+      </View>
     </ScrollView>
   );
 }
@@ -360,21 +392,46 @@ const styles = StyleSheet.create({
     color: "#9aa0a6",
     fontSize: 12,
   },
+  visibilityPrivate: {
+    color: "#fde68a",
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  visibilityPublished: {
+    color: "#86efac",
+    fontSize: 12,
+    fontWeight: "800",
+  },
   reportMessage: {
     color: "#e5e7eb",
     fontSize: 14,
     lineHeight: 20,
     marginTop: 4,
   },
+  reportActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 6,
+  },
   reviewBtn: {
     alignSelf: "flex-start",
-    marginTop: 6,
     backgroundColor: "#1d4ed8",
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
   reviewBtnText: {
+    color: "#fff",
+    fontWeight: "800",
+  },
+  publishBtn: {
+    alignSelf: "flex-start",
+    backgroundColor: "#166534",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  publishBtnText: {
     color: "#fff",
     fontWeight: "800",
   },

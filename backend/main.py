@@ -70,6 +70,22 @@ def _ensure_client_columns() -> None:
                 conn.execute(text(f"ALTER TABLE clients ADD COLUMN {name} {column_type}"))
 
 
+def _ensure_field_report_columns() -> None:
+    inspector = inspect(engine)
+    if "field_reports" not in inspector.get_table_names():
+        return
+
+    existing = {col["name"] for col in inspector.get_columns("field_reports")}
+    needed = {
+        "published_to_all": "BOOLEAN DEFAULT 0",
+        "published_by_user_id": "INTEGER",
+    }
+    with engine.begin() as conn:
+        for name, column_type in needed.items():
+            if name not in existing:
+                conn.execute(text(f"ALTER TABLE field_reports ADD COLUMN {name} {column_type}"))
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -210,6 +226,7 @@ def on_startup():
     _ensure_incident_columns()
     _ensure_contact_log_columns()
     _ensure_client_columns()
+    _ensure_field_report_columns()
     _sync_bootstrap_users()
 
 
@@ -235,6 +252,7 @@ def admin_init():
     _ensure_incident_columns()
     _ensure_contact_log_columns()
     _ensure_client_columns()
+    _ensure_field_report_columns()
     bootstrap = _sync_bootstrap_users()
     return {"status": "initialized", "users": bootstrap}
 
@@ -653,6 +671,8 @@ def _serialize_field_report(report: FieldReport, sender: User | None):
         "location_text": report.location_text,
         "severity": report.severity,
         "status": report.status,
+        "published_to_all": bool(report.published_to_all),
+        "published_by_user_id": report.published_by_user_id,
         "created_at": report.created_at.isoformat() if report.created_at else None,
         "published_at": report.published_at.isoformat() if report.published_at else None,
     }
@@ -1041,6 +1061,22 @@ def field_reports_inbox(current_user: User = Depends(get_current_user)):
         db.close()
 
 
+@app.get("/field-reports")
+def field_reports(current_user: User = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        rows_query = db.query(FieldReport, User).join(User, User.id == FieldReport.sender_user_id)
+        if not _is_admin(current_user):
+            rows_query = rows_query.filter(FieldReport.published_to_all.is_(True))
+
+        rows = rows_query.order_by(FieldReport.created_at.desc(), FieldReport.id.desc()).all()
+        return {"reports": [_serialize_field_report(report, sender) for report, sender in rows]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"field_reports failed: {e}")
+    finally:
+        db.close()
+
+
 @app.post("/field-reports/{report_id}/mark-reviewed")
 def mark_field_report_reviewed(report_id: int, current_user: User = Depends(get_current_user)):
     if not _is_admin(current_user):
@@ -1063,6 +1099,34 @@ def mark_field_report_reviewed(report_id: int, current_user: User = Depends(get_
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"mark_field_report_reviewed failed: {e}")
+    finally:
+        db.close()
+
+
+@app.post("/field-reports/{report_id}/publish")
+def publish_field_report(report_id: int, current_user: User = Depends(get_current_user)):
+    if not _is_admin(current_user):
+        raise HTTPException(403, "Admin access required")
+
+    db = SessionLocal()
+    try:
+        report = db.query(FieldReport).filter(FieldReport.id == report_id).first()
+        if not report:
+            raise HTTPException(404, "Field report not found")
+
+        report.published_to_all = True
+        report.published_by_user_id = current_user.id
+        report.published_at = datetime.utcnow()
+        db.commit()
+        db.refresh(report)
+
+        sender = db.query(User).filter(User.id == report.sender_user_id).first()
+        return {"report": _serialize_field_report(report, sender)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"publish_field_report failed: {e}")
     finally:
         db.close()
 
