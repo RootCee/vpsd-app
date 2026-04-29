@@ -461,6 +461,76 @@ def list_users(current_user: User = Depends(get_current_user)):
         db.close()
 
 
+@app.delete("/auth/users/{user_id}")
+def delete_user(user_id: int, current_user: User = Depends(get_current_user)):
+    if not _is_admin(current_user):
+        raise HTTPException(403, "Admin access required")
+
+    if current_user.id == user_id:
+        raise HTTPException(400, "You cannot delete your own account.")
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(404, "User not found")
+
+        blockers = []
+        if db.query(FieldReport.id).filter(FieldReport.sender_user_id == user_id).first():
+            blockers.append("field reports")
+        if db.query(Group.id).filter(Group.created_by_user_id == user_id).first():
+            blockers.append("groups")
+
+        if blockers:
+            joined = " and ".join(blockers)
+            raise HTTPException(
+                409,
+                f"User cannot be deleted because they still own {joined}. Remove or reassign those records first.",
+            )
+
+        db.query(GroupMember).filter(GroupMember.user_id == user_id).delete(synchronize_session=False)
+        db.query(FieldReportShare).filter(
+            or_(
+                FieldReportShare.shared_with_user_id == user_id,
+                FieldReportShare.created_by_user_id == user_id,
+            )
+        ).delete(synchronize_session=False)
+        db.query(ContactLogShare).filter(
+            or_(
+                ContactLogShare.shared_with_user_id == user_id,
+                ContactLogShare.created_by_user_id == user_id,
+            )
+        ).delete(synchronize_session=False)
+        db.query(Client).filter(Client.created_by_user_id == user_id).update(
+            {Client.created_by_user_id: None},
+            synchronize_session=False,
+        )
+        db.query(ContactLog).filter(ContactLog.created_by_user_id == user_id).update(
+            {ContactLog.created_by_user_id: None},
+            synchronize_session=False,
+        )
+        db.query(FieldReport).filter(FieldReport.published_by_user_id == user_id).update(
+            {FieldReport.published_by_user_id: None},
+            synchronize_session=False,
+        )
+
+        db.delete(user)
+        db.commit()
+
+        return {
+            "success": True,
+            "deleted_user_id": user_id,
+            "message": "User deleted successfully.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Unable to delete user: {e}")
+    finally:
+        db.close()
+
+
 @app.get("/auth/me")
 def auth_me(current_user: User = Depends(get_current_user)):
     return {
@@ -684,6 +754,38 @@ def remove_group_member(group_id: int, user_id: int, current_user: User = Depend
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"remove_group_member failed: {e}")
+    finally:
+        db.close()
+
+
+@app.delete("/groups/{group_id}")
+def delete_group(group_id: int, current_user: User = Depends(get_current_user)):
+    if not _is_admin(current_user):
+        raise HTTPException(403, "Admin access required")
+
+    db = SessionLocal()
+    try:
+        group = db.query(Group).filter(Group.id == group_id).first()
+        if not group:
+            raise HTTPException(404, "Group not found")
+
+        db.query(GroupMember).filter(GroupMember.group_id == group_id).delete(synchronize_session=False)
+        db.query(FieldReportShare).filter(
+            FieldReportShare.shared_with_group_id == group_id
+        ).delete(synchronize_session=False)
+        db.delete(group)
+        db.commit()
+
+        return {
+            "success": True,
+            "deleted_group_id": group_id,
+            "message": "Group deleted successfully.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"delete_group failed: {e}")
     finally:
         db.close()
 
@@ -1476,6 +1578,37 @@ def mark_field_report_reviewed(report_id: int, current_user: User = Depends(get_
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"mark_field_report_reviewed failed: {e}")
+    finally:
+        db.close()
+
+
+@app.delete("/field-reports/{report_id}")
+def delete_field_report(report_id: int, current_user: User = Depends(get_current_user)):
+    if not _is_admin(current_user):
+        raise HTTPException(403, "Admin access required")
+
+    db = SessionLocal()
+    try:
+        report = db.query(FieldReport).filter(FieldReport.id == report_id).first()
+        if not report:
+            raise HTTPException(404, "Field report not found")
+
+        db.query(FieldReportShare).filter(
+            FieldReportShare.field_report_id == report_id
+        ).delete(synchronize_session=False)
+        db.delete(report)
+        db.commit()
+
+        return {
+            "success": True,
+            "deleted_field_report_id": report_id,
+            "message": "Field report deleted successfully.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"delete_field_report failed: {e}")
     finally:
         db.close()
 

@@ -196,6 +196,29 @@ export default function ReportsScreen() {
     ]);
   };
 
+  const deleteReport = async (reportId: number) => {
+    Alert.alert("Delete Report", "Delete this field report? This cannot be undone.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          setLoadingInbox(true);
+          try {
+            const res = await authenticatedFetch(`/field-reports/${reportId}`, {
+              method: "DELETE",
+            });
+            await parseApiResponse(res, "Unable to delete this field report.");
+            await refreshAll();
+          } catch (e: any) {
+            Alert.alert("Delete Failed", getErrorMessage(e, "Please try again."));
+            setLoadingInbox(false);
+          }
+        },
+      },
+    ]);
+  };
+
   const openShareModal = (report: FieldReport) => {
     setSharingReport(report);
     setSelectedUserIds((report.shared_with_users || []).map((item) => item.id));
@@ -372,6 +395,9 @@ export default function ReportsScreen() {
                     ) : null}
                     <Pressable style={styles.shareBtn} onPress={() => openShareModal(item)} disabled={loadingInbox}>
                       <Text style={styles.shareBtnText}>Share</Text>
+                    </Pressable>
+                    <Pressable style={styles.deleteBtn} onPress={() => deleteReport(item.id)} disabled={loadingInbox}>
+                      <Text style={styles.deleteBtnText}>Delete</Text>
                     </Pressable>
                   </View>
                 ) : null}
@@ -639,6 +665,17 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   shareBtnText: {
+    color: "#fff",
+    fontWeight: "800",
+  },
+  deleteBtn: {
+    alignSelf: "flex-start",
+    backgroundColor: "#991b1b",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  deleteBtnText: {
     color: "#fff",
     fontWeight: "800",
   },

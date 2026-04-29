@@ -203,6 +203,59 @@ export default function AdminScreen() {
     }
   };
 
+  const deleteUser = async (item: UserItem) => {
+    if (item.id === user?.id) {
+      Alert.alert("Not Allowed", "You cannot delete your own account.");
+      return;
+    }
+
+    Alert.alert("Delete User", `Delete ${item.name || item.email}? This cannot be undone.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          setLoading(true);
+          try {
+            const res = await authenticatedFetch(`/auth/users/${item.id}`, {
+              method: "DELETE",
+            });
+            await parseApiResponse(res, "Unable to delete this user.");
+            await Promise.all([loadUsers(), loadGroups()]);
+          } catch (error) {
+            Alert.alert("Delete User Failed", getErrorMessage(error, "Please try again."));
+          } finally {
+            setLoading(false);
+          }
+        },
+      },
+    ]);
+  };
+
+  const deleteGroup = async (group: GroupItem) => {
+    Alert.alert("Delete Group", `Delete ${group.name}? This will remove its memberships and report shares.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          setLoading(true);
+          try {
+            const res = await authenticatedFetch(`/groups/${group.id}`, {
+              method: "DELETE",
+            });
+            await parseApiResponse(res, "Unable to delete this group.");
+            await loadGroups();
+          } catch (error) {
+            Alert.alert("Delete Group Failed", getErrorMessage(error, "Please try again."));
+          } finally {
+            setLoading(false);
+          }
+        },
+      },
+    ]);
+  };
+
   if (!isAdmin) {
     return (
       <View style={styles.screen}>
@@ -295,11 +348,22 @@ export default function AdminScreen() {
         ListEmptyComponent={<Text style={styles.helper}>No users found yet.</Text>}
         renderItem={({ item }) => (
           <View style={styles.userCard}>
-            <Text style={styles.userName}>{item.name || "Unnamed User"}</Text>
-            <Text style={styles.userMeta}>{item.email}</Text>
-            <Text style={styles.userMeta}>
-              {item.role} • {item.is_active ? "active" : "inactive"}
-            </Text>
+            <View style={styles.userRow}>
+              <View style={styles.userCopy}>
+                <Text style={styles.userName}>{item.name || "Unnamed User"}</Text>
+                <Text style={styles.userMeta}>{item.email}</Text>
+                <Text style={styles.userMeta}>
+                  {item.role} • {item.is_active ? "active" : "inactive"}
+                </Text>
+              </View>
+              {item.id === user?.id ? (
+                <Text style={styles.currentUserText}>Current account</Text>
+              ) : (
+                <Pressable style={styles.deleteBtn} onPress={() => deleteUser(item)} disabled={loading}>
+                  <Text style={styles.deleteBtnText}>Delete</Text>
+                </Pressable>
+              )}
+            </View>
           </View>
         )}
       />
@@ -350,7 +414,12 @@ export default function AdminScreen() {
 
       {selectedGroup ? (
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>{selectedGroup.name}</Text>
+          <View style={styles.groupHeaderRow}>
+            <Text style={styles.sectionTitle}>{selectedGroup.name}</Text>
+            <Pressable style={styles.deleteBtn} onPress={() => deleteGroup(selectedGroup)} disabled={loading}>
+              <Text style={styles.deleteBtnText}>Delete</Text>
+            </Pressable>
+          </View>
           {selectedGroup.description ? <Text style={styles.helper}>{selectedGroup.description}</Text> : null}
 
           <Text style={styles.label}>Members</Text>
@@ -509,6 +578,16 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 4,
   },
+  userRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
+  userCopy: {
+    flex: 1,
+    gap: 4,
+  },
   userName: {
     color: "#fff",
     fontWeight: "800",
@@ -517,10 +596,32 @@ const styles = StyleSheet.create({
   userMeta: {
     color: "#9aa0a6",
   },
+  currentUserText: {
+    color: "#9aa0a6",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  deleteBtn: {
+    alignSelf: "flex-start",
+    backgroundColor: "#991b1b",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  deleteBtnText: {
+    color: "#fff",
+    fontWeight: "800",
+  },
   groupPickerRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
+  },
+  groupHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
   },
   groupPill: {
     borderWidth: 1,
