@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import logging
 import os
 import random
 from typing import Optional
@@ -32,6 +33,7 @@ _ARCGIS_URL = (
 
 
 app = FastAPI()
+logger = logging.getLogger(__name__)
 
 
 def _ensure_incident_columns() -> None:
@@ -1893,35 +1895,35 @@ _SD_CENTERS = [
 ]
 
 
-def _seed_demo_events(db, days: int, n: int = 150) -> int:
-    """Wipe and repopulate demo events. Returns count inserted."""
-    db.query(Incident).filter(Incident.source == "sdpd_demo_events").delete()
-    now = datetime.utcnow()
-    for i in range(n):
-        base_lat, base_lon = _SD_CENTERS[i % len(_SD_CENTERS)]
-        lat = base_lat + random.uniform(-0.025, 0.025)
-        lon = base_lon + random.uniform(-0.025, 0.025)
-        days_ago = random.uniform(0, days)
-        occurred_at = now - timedelta(days=days_ago, hours=random.randint(0, 23))
-        db.add(Incident(
-            source="sdpd_demo_events",
-            incident_type=random.choice(_DEMO_INCIDENT_TYPES),
-            offense_category=random.choice(_DEMO_INCIDENT_TYPES).replace("_", " ").title(),
-            occurred_at=occurred_at,
-            lat=lat,
-            lon=lon,
-        ))
-    return n
+def _normalized_incident(
+    *,
+    external_id: str,
+    incident_type: str,
+    offense_category: str,
+    occurred_at: datetime,
+    block_address: object = None,
+    code_section: object = None,
+    offense_code: object = None,
+    source: str,
+    lat: float,
+    lon: float,
+) -> dict[str, object]:
+    return {
+        "external_id": external_id,
+        "incident_type": incident_type,
+        "offense_category": offense_category,
+        "occurred_at": occurred_at,
+        "block_address": str(block_address) if block_address else None,
+        "code_section": str(code_section) if code_section else None,
+        "offense_code": str(offense_code) if offense_code else None,
+        "source": source,
+        "lat": float(lat),
+        "lon": float(lon),
+    }
 
 
-@app.post("/events/pull")
-def pull_events(days: int = 7, current_user: User = Depends(get_current_user)):
-    """Fetch SDPD NIBRS incidents from ArcGIS; fall back to demo data."""
-    Base.metadata.create_all(bind=engine)
-    _ensure_incident_columns()
-
+def fetch_sdpd_events(days: int = 7) -> tuple[list[dict[str, object]], str | None]:
     since = datetime.utcnow() - timedelta(days=days)
-
     params: dict[str, str] = {
         "f": "json",
         "outFields": (
@@ -1947,93 +1949,168 @@ def pull_events(days: int = 7, current_user: User = Depends(get_current_user)):
     except Exception as e:
         arcgis_error = str(e)
 
+    incidents: list[dict[str, object]] = []
+    for feat in features:
+        attrs = feat.get("attributes") or {}
+        geom = feat.get("geometry") or {}
+
+        nibrs_uniq = attrs.get("NIBRS_UNIQ")
+        if not nibrs_uniq:
+            continue
+
+        lon = geom.get("x") if geom.get("x") is not None else attrs.get("X")
+        lat = geom.get("y") if geom.get("y") is not None else attrs.get("Y")
+        if lat is None or lon is None:
+            continue
+
+        ts_raw = attrs.get("OCCURED_ON")
+        if ts_raw:
+            occurred_at = datetime.utcfromtimestamp(int(ts_raw) / 1000)
+        else:
+            occurred_at = datetime.utcnow()
+
+        incident_type = str(
+            attrs.get("IBR_OFFENSE_DESCRIPTION")
+            or attrs.get("PD_OFFENSE_CATEGORY")
+            or "unknown"
+        )
+        offense_category = str(
+            attrs.get("PD_OFFENSE_CATEGORY")
+            or attrs.get("IBR_OFFENSE_DESCRIPTION")
+            or "unknown"
+        )
+
+        incidents.append(
+            _normalized_incident(
+                external_id=f"sdpd_{nibrs_uniq}",
+                incident_type=incident_type,
+                offense_category=offense_category,
+                occurred_at=occurred_at,
+                block_address=attrs.get("BLOCK_ADDR"),
+                code_section=attrs.get("CODE_SECTION"),
+                offense_code=attrs.get("IBR_OFFENSE"),
+                source="sdpd_nibrs",
+                lat=lat,
+                lon=lon,
+            )
+        )
+
+    return incidents, arcgis_error
+
+
+def fetch_el_cajon_events(days: int = 7) -> list[dict[str, object]]:
+    logger.info("El Cajon incident source not configured yet; returning no incidents")
+    return []
+
+
+def fetch_la_mesa_events(days: int = 7) -> list[dict[str, object]]:
+    logger.info("La Mesa incident source not configured yet; returning no incidents")
+    return []
+
+
+def fetch_sheriff_events(days: int = 7) -> list[dict[str, object]]:
+    logger.info("Sheriff/Spring Valley incident source not configured yet; returning no incidents")
+    return []
+
+
+def _upsert_incidents(db, incidents: list[dict[str, object]]) -> tuple[int, int]:
+    inserted = 0
+    skipped = 0
+    for item in incidents:
+        external_id = str(item["external_id"])
+        existing = db.query(Incident).filter(Incident.external_id == external_id).first()
+        if existing:
+            existing.lat = float(item["lat"])
+            existing.lon = float(item["lon"])
+            existing.occurred_at = item["occurred_at"]
+            existing.offense_category = item["offense_category"]
+            existing.incident_type = item["incident_type"]
+            existing.block_address = item["block_address"]
+            existing.code_section = item["code_section"]
+            existing.offense_code = item["offense_code"]
+            existing.source = str(item["source"])
+            skipped += 1
+        else:
+            db.add(Incident(**item))
+            inserted += 1
+    return inserted, skipped
+
+
+def _seed_demo_events(db, days: int, n: int = 150) -> int:
+    """Wipe and repopulate demo events. Returns count inserted."""
+    db.query(Incident).filter(Incident.source == "sdpd_demo_events").delete()
+    now = datetime.utcnow()
+    for i in range(n):
+        base_lat, base_lon = _SD_CENTERS[i % len(_SD_CENTERS)]
+        lat = base_lat + random.uniform(-0.025, 0.025)
+        lon = base_lon + random.uniform(-0.025, 0.025)
+        days_ago = random.uniform(0, days)
+        occurred_at = now - timedelta(days=days_ago, hours=random.randint(0, 23))
+        db.add(Incident(
+            source="sdpd_demo_events",
+            incident_type=random.choice(_DEMO_INCIDENT_TYPES),
+            offense_category=random.choice(_DEMO_INCIDENT_TYPES).replace("_", " ").title(),
+            occurred_at=occurred_at,
+            lat=lat,
+            lon=lon,
+        ))
+    return n
+
+
+@app.post("/events/pull")
+def pull_events(days: int = 7, current_user: User = Depends(get_current_user)):
+    """Fetch incidents from approved sources; keep SDPD demo fallback when needed."""
+    Base.metadata.create_all(bind=engine)
+    _ensure_incident_columns()
+
     db = SessionLocal()
     try:
-        if features:
-            inserted = 0
-            skipped = 0
-            for feat in features:
-                attrs = feat.get("attributes") or {}
-                geom = feat.get("geometry") or {}
+        sdpd_incidents, arcgis_error = fetch_sdpd_events(days)
+        source_payloads: dict[str, list[dict[str, object]]] = {
+            "sdpd_nibrs": sdpd_incidents,
+            "el_cajon": fetch_el_cajon_events(days),
+            "la_mesa": fetch_la_mesa_events(days),
+            "sheriff": fetch_sheriff_events(days),
+        }
 
-                # --- external_id from NIBRS_UNIQ ---
-                nibrs_uniq = attrs.get("NIBRS_UNIQ")
-                if not nibrs_uniq:
-                    skipped += 1
-                    continue
-                external_id = f"sdpd_{nibrs_uniq}"
+        total_inserted = 0
+        total_skipped = 0
+        counts_by_source: dict[str, dict[str, int]] = {}
 
-                # --- coordinates: prefer geometry x/y, fall back to X/Y attrs ---
-                lon = geom.get("x") if geom.get("x") is not None else attrs.get("X")
-                lat = geom.get("y") if geom.get("y") is not None else attrs.get("Y")
-                if lat is None or lon is None:
-                    skipped += 1
-                    continue
+        for source_name, items in source_payloads.items():
+            inserted, skipped = _upsert_incidents(db, items)
+            counts_by_source[source_name] = {
+                "fetched": len(items),
+                "inserted": inserted,
+                "skipped": skipped,
+            }
+            total_inserted += inserted
+            total_skipped += skipped
 
-                # --- occurred_at from OCCURED_ON (epoch ms) ---
-                ts_raw = attrs.get("OCCURED_ON")
-                if ts_raw:
-                    occurred_at = datetime.utcfromtimestamp(int(ts_raw) / 1000)
-                else:
-                    occurred_at = datetime.utcnow()
-
-                # --- incident_type / offense_category ---
-                incident_type = str(
-                    attrs.get("IBR_OFFENSE_DESCRIPTION")
-                    or attrs.get("PD_OFFENSE_CATEGORY")
-                    or "unknown"
-                )
-                offense_category = str(
-                    attrs.get("PD_OFFENSE_CATEGORY")
-                    or attrs.get("IBR_OFFENSE_DESCRIPTION")
-                    or "unknown"
-                )
-                block_address = attrs.get("BLOCK_ADDR")
-                code_section = attrs.get("CODE_SECTION")
-                offense_code = attrs.get("IBR_OFFENSE")
-
-                # --- upsert by external_id ---
-                existing = db.query(Incident).filter(
-                    Incident.external_id == external_id
-                ).first()
-                if existing:
-                    existing.lat = lat
-                    existing.lon = lon
-                    existing.occurred_at = occurred_at
-                    existing.offense_category = offense_category
-                    existing.incident_type = incident_type
-                    existing.block_address = str(block_address) if block_address else None
-                    existing.code_section = str(code_section) if code_section else None
-                    existing.offense_code = str(offense_code) if offense_code else None
-                    skipped += 1
-                else:
-                    db.add(Incident(
-                        external_id=external_id,
-                        source="sdpd_nibrs",
-                        incident_type=incident_type,
-                        offense_category=offense_category,
-                        block_address=str(block_address) if block_address else None,
-                        code_section=str(code_section) if code_section else None,
-                        offense_code=str(offense_code) if offense_code else None,
-                        occurred_at=occurred_at,
-                        lat=float(lat),
-                        lon=float(lon),
-                    ))
-                    inserted += 1
-
+        if total_inserted or total_skipped:
             db.commit()
-            return {"inserted": inserted, "skipped": skipped, "source": "sdpd_nibrs"}
+            response: dict[str, object] = {
+                "inserted": total_inserted,
+                "skipped": total_skipped,
+                "source": "multi",
+                "counts_by_source": counts_by_source,
+            }
+            if arcgis_error:
+                response["sdpd_note"] = arcgis_error
+            return response
 
-        # --- Demo fallback when ArcGIS is unreachable / empty ---
         n = _seed_demo_events(db, days)
         db.commit()
         return {
             "inserted": n,
             "skipped": 0,
             "source": "demo",
+            "counts_by_source": {
+                **counts_by_source,
+                "sdpd_demo_events": {"fetched": n, "inserted": n, "skipped": 0},
+            },
             "arcgis_note": arcgis_error or "no features returned",
         }
-
     except HTTPException:
         raise
     except Exception as e:
