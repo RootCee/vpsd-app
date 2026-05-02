@@ -795,6 +795,15 @@ def delete_group(group_id: int, current_user: User = Depends(get_current_user)):
 # ---------------------------
 # HOTSPOTS
 # ---------------------------
+def _resolve_hotspot_sources(source: str) -> list[str]:
+    normalized = (source or "").strip().lower()
+    if normalized == "multi":
+        return ["sdpd_nibrs", "el_cajon", "la_mesa", "sheriff"]
+    if normalized == "demo":
+        return ["sdpd_demo_events"]
+    return [source]
+
+
 @app.post("/hotspots/seed")
 def seed_hotspots(source: str = "sdpd_demo", n: int = 120, current_user: User = Depends(get_current_user)):
     db = SessionLocal()
@@ -847,9 +856,10 @@ def compute_hotspots(source: str = "sdpd_demo", current_user: User = Depends(get
         db.query(HotspotCell).delete()
         db.commit()
 
-        incidents = db.query(Incident).filter(Incident.source == source).all()
+        sources = _resolve_hotspot_sources(source)
+        incidents = db.query(Incident).filter(Incident.source.in_(sources)).all()
         if not incidents:
-            return {"status": "no_incidents", "cells": 0}
+            return {"status": "no_incidents", "cells": 0, "sources": sources}
 
         grid = {}
         now = datetime.utcnow()
@@ -880,7 +890,7 @@ def compute_hotspots(source: str = "sdpd_demo", current_user: User = Depends(get
             )
 
         db.commit()
-        return {"status": "computed", "cells": len(grid)}
+        return {"status": "computed", "cells": len(grid), "sources": sources}
 
     except Exception as e:
         db.rollback()
@@ -1999,16 +2009,29 @@ def fetch_sdpd_events(days: int = 7) -> tuple[list[dict[str, object]], str | Non
 
 
 def fetch_el_cajon_events(days: int = 7) -> list[dict[str, object]]:
+    # TODO: Prefer the official SANDAG/ARJIS CIBRS open-data route for El Cajon
+    # rather than city records pages. SANDAG documents that regional crime mapping
+    # includes El Cajon data, but this backend should stay stubbed until we confirm
+    # the exact public machine-readable dataset/API endpoint and field mapping.
     logger.info("El Cajon incident source not configured yet; returning no incidents")
     return []
 
 
 def fetch_la_mesa_events(days: int = 7) -> list[dict[str, object]]:
+    # TODO: Prefer the official SANDAG/ARJIS CIBRS open-data route for La Mesa.
+    # La Mesa's public records pages support report requests, but no clean public
+    # incident feed/API is confirmed here yet, so this remains intentionally stubbed.
     logger.info("La Mesa incident source not configured yet; returning no incidents")
     return []
 
 
 def fetch_sheriff_events(days: int = 7) -> list[dict[str, object]]:
+    # TODO: Spring Valley is likely best covered through the official SANDAG/ARJIS
+    # regional crime data because SANDAG says Sheriff contract-city and
+    # unincorporated-area reports feed the regional crime mapping/open-data system.
+    # The Sheriff's Calls for Service page is official, but it explicitly says it
+    # should not be relied on for statistical crime data, so do not ingest it here
+    # unless a separate official machine-readable endpoint is confirmed as suitable.
     logger.info("Sheriff/Spring Valley incident source not configured yet; returning no incidents")
     return []
 
